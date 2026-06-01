@@ -33,6 +33,12 @@ See:
 docs/smart-extract-helper-protocol.md
 ```
 
+A protocol conformance harness lives in `scripts/test-utils/` and runs as part of `pnpm test`. Third-party local helpers can reuse `scripts/test-utils/helper-conformance.test.ts` as a checklist for compatibility — see the "Conformance harness" section in the protocol doc.
+
+## CI
+
+GitHub Actions runs install, `pnpm build`, `pnpm build:extension`, and `pnpm test` on Node 22 + pnpm via `.github/workflows/ci.yml`.
+
 ## Fixture corpus
 
 Generate realistic password-page fixtures:

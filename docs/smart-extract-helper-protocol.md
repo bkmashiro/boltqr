@@ -320,10 +320,10 @@ A compatible local helper only needs:
 ## Example curl
 
 ```bash
-TOKEN='dev-token'
+HELPER_BEARER='replace-me'
 
 curl -sS http://127.0.0.1:17321/v1/candidates \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer ${HELPER_BEARER}" \
   -H 'Content-Type: application/json' \
   -d '{
     "schemaVersion": 1,
@@ -340,8 +340,38 @@ curl -sS http://127.0.0.1:17321/v1/candidates \
   }'
 
 curl -sS 'http://127.0.0.1:17321/v1/passwords?file=a.zip&url=https%3A%2F%2Ffiles.example.com%2Fa.zip' \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: Bearer ${HELPER_BEARER}"
 ```
+
+## Conformance harness
+
+This repo ships a reference implementation of the protocol used as an integration test target:
+
+```txt
+scripts/test-utils/helper-protocol.ts   # types + CandidateBundle validation
+scripts/test-utils/helper-store.ts      # in-memory bundle store + scoring
+scripts/test-utils/helper-server.ts     # loopback-bound HTTP server (startConformanceHelper)
+scripts/test-utils/helper-conformance.test.ts  # protocol-level integration tests
+```
+
+Another local helper project can reuse the same tests to check protocol compatibility:
+
+1. Start your helper on a loopback port with a known bearer token.
+2. Point a test runner at `${YOUR_HELPER_URL}` and replay the requests/assertions in `helper-conformance.test.ts`:
+   - `GET /healthz` returns `{ ok, protocol: "boltqr-password-candidates", version: 1 }`.
+   - `POST /v1/candidates` with a valid `CandidateBundle` returns `{ ok: true, stored: <number> }`.
+   - `GET /v1/passwords?file=...&url=...` returns `{ candidates: string[] }`, optionally `items` and `meta`.
+   - Wrong/missing bearer token returns 401.
+   - `POST /v1/passwords/success` is optional but should return `{ ok: true }` when accepted.
+3. Bind only to `127.0.0.1` or `[::1]`. Refuse `0.0.0.0`.
+
+Run BoltQR's harness locally:
+
+```bash
+pnpm test
+```
+
+The harness uses an ephemeral port on `127.0.0.1`. No secrets are stored; the bearer value used in tests is a hard-coded non-secret literal scoped to the test process.
 
 ## Versioning
 
