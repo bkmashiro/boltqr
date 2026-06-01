@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BoltQR 设置</title>
+</head>
+<body>
+  <main id="app">
+    <h1>BoltQR 设置</h1>
+    <p class="muted">配置本地密码候选 helper。BoltQR 只向 localhost 发送二维码页面中提取的候选。</p>
+
+    <label>
+      Helper endpoint
+      <input id="endpoint" type="url" placeholder="http://127.0.0.1:17321" />
+    </label>
+
+    <label>
+      Bearer token
+      <input id="token" type="password" autocomplete="off" placeholder="helper-token.txt 中的 token" />
+    </label>
+
+    <label class="check">
+      <input id="enabled" type="checkbox" />
+      启用候选上报
+    </label>
+
+    <label class="check">
+      <input id="manualOnly" type="checkbox" />
+      仅手动右键识别时上报
+    </label>
+
+    <div class="actions">
+      <button id="save">保存</button>
+      <button id="test" type="button">测试连接</button>
+    </div>
+
+    <pre id="status" aria-live="polite"></pre>
+  </main>
+  <script type="module" src="./options.js"></script>
+</body>
+</html>

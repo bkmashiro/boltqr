@@ -1,0 +1,113 @@
+{
+  "cases": [
+    {
+      "id": "01-visible-extract-password",
+      "title": "正文解压密码",
+      "file": "01-visible-extract-password.html",
+      "qrText": "https://files.example.com/releases/archive-visible.zip",
+      "expectedCandidates": [
+        "www.example.com"
+      ]
+    },
+    {
+      "id": "02-pan-code-and-archive-password",
+      "title": "提取码与压缩包密码共存",
+      "file": "02-pan-code-and-archive-password.html",
+      "qrText": "https://pan.example.net/s/abc?file=pan-code.rar",
+      "expectedCandidates": [
+        "abcd",
+        "ZipPass-2026"
+      ]
+    },
+    {
+      "id": "03-copy-button-attribute",
+      "title": "复制按钮属性",
+      "file": "03-copy-button-attribute.html",
+      "qrText": "https://cdn.example.org/packs/copy-button.7z",
+      "expectedCandidates": [
+        "CopyButtonSecret88"
+      ]
+    },
+    {
+      "id": "04-hidden-input-value",
+      "title": "隐藏 input 值",
+      "file": "04-hidden-input-value.html",
+      "qrText": "https://dl.example.org/files/hidden-input.zip",
+      "expectedCandidates": [
+        "HiddenInput-42"
+      ]
+    },
+    {
+      "id": "05-near-qr-priority",
+      "title": "二维码附近文本",
+      "file": "05-near-qr-priority.html",
+      "qrText": "https://near.example.com/a/near-qr.zip",
+      "expectedCandidates": [
+        "near-pass-001"
+      ]
+    },
+    {
+      "id": "06-english-password",
+      "title": "英文 password",
+      "file": "06-english-password.html",
+      "qrText": "https://english.example.com/archive/english.rar",
+      "expectedCandidates": [
+        "EnglishPass99"
+      ]
+    },
+    {
+      "id": "07-domain-password",
+      "title": "域名作为密码",
+      "file": "07-domain-password.html",
+      "qrText": "https://files.domainpass.test/pkg/domainpass.zip",
+      "expectedCandidates": [
+        "domainpass.test"
+      ]
+    },
+    {
+      "id": "08-title-attribute",
+      "title": "title 属性",
+      "file": "08-title-attribute.html",
+      "qrText": "https://attr.example.com/pkg/title-attr.zip",
+      "expectedCandidates": [
+        "TitleAttr-PASS"
+      ]
+    },
+    {
+      "id": "09-aria-label",
+      "title": "aria-label 属性",
+      "file": "09-aria-label.html",
+      "qrText": "https://aria.example.com/pkg/aria-label.zip",
+      "expectedCandidates": [
+        "AriaLabelSecret"
+      ]
+    },
+    {
+      "id": "10-noisy-page",
+      "title": "大量垃圾文本",
+      "file": "10-noisy-page.html",
+      "qrText": "https://noise.example.com/pkg/noisy.zip",
+      "expectedCandidates": [
+        "TruePass-Noise"
+      ]
+    },
+    {
+      "id": "11-quark-style",
+      "title": "夸克风格访问码",
+      "file": "11-quark-style.html",
+      "qrText": "https://quark.example.com/s/pkg-quark.zip",
+      "expectedCandidates": [
+        "QK88"
+      ]
+    },
+    {
+      "id": "12-non-url-qr-with-password",
+      "title": "非 URL 二维码但页面有密码",
+      "file": "12-non-url-qr-with-password.html",
+      "qrText": "MAGNET-LIKE-CONTENT-WITHOUT-URL",
+      "expectedCandidates": [
+        "NonUrlPass"
+      ]
+    }
+  ]
+}
