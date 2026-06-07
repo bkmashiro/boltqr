@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "bench": "node scripts/run-bench.mjs",
-    "build:extension": "vite build --config vite.extension.background.config.ts && vite build --config vite.extension.content.config.ts && vite build --config vite.extension.options.config.ts && node scripts/copy-extension-manifest.mjs && node scripts/copy-zxing-wasm.mjs",
+    "build:extension": "vite build --config vite.extension.background.config.ts && vite build --config vite.extension.content.config.ts && vite build --config vite.extension.options.config.ts && node scripts/copy-extension-manifest.mjs && node scripts/copy-zxing-wasm.mjs && pnpm validate:extension-assets",
+    "validate:extension-assets": "node scripts/validate-extension-assets.mjs",
+    "icons:extension": "python3 scripts/generate-extension-icons.py",
     "test": "pnpm fixtures && vitest run",
     "fixtures": "node scripts/generate-password-page-fixtures.mjs"
   },
