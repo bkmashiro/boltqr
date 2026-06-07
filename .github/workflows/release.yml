@@ -65,7 +65,7 @@ jobs:
           unzip -t "release/${{ steps.meta.outputs.artifact_name }}.zip"
           unzip -l "release/${{ steps.meta.outputs.artifact_name }}.zip"
           test "$(unzip -Z1 "release/${{ steps.meta.outputs.artifact_name }}.zip" | grep -c '^manifest.json$')" -eq 1
-          sha256sum "release/${{ steps.meta.outputs.artifact_name }}.zip" > "release/${{ steps.meta.outputs.artifact_name }}.zip.sha256"
+          (cd release && sha256sum "${{ steps.meta.outputs.artifact_name }}.zip" > "${{ steps.meta.outputs.artifact_name }}.zip.sha256")
 
       - name: Upload packaged extension artifact
         uses: actions/upload-artifact@v7
