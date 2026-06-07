@@ -39,6 +39,14 @@ A protocol conformance harness lives in `scripts/test-utils/` and runs as part o
 
 GitHub Actions runs install, `pnpm build`, `pnpm build:extension`, and `pnpm test` on Node 22 + pnpm via `.github/workflows/ci.yml`.
 
+## Fast auto-scan
+
+The auto-scan path filters and queues likely QR images with strict performance guardrails before local decoding. See:
+
+```txt
+docs/fast-auto-scan.md
+```
+
 ## Fixture corpus
 
 Generate realistic password-page fixtures:

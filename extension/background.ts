@@ -23,6 +23,15 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   void scanImageFromContextMenu(info.srcUrl, tab.id)
 })
 
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const msg = message as any
+  if (msg?.type !== 'boltqr:auto-scan-image' || !msg.srcUrl || !sender.tab?.id) return undefined
+  void scanImageFromAutoScan(msg.srcUrl, sender.tab.id)
+    .then(() => sendResponse({ ok: true }))
+    .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }))
+  return true
+})
+
 async function ensureZXing() {
   if (!zxingReady) {
     zxingReady = prepareZXingModule({
@@ -36,15 +45,24 @@ async function ensureZXing() {
 }
 
 async function scanImageFromContextMenu(srcUrl: string, tabId: number) {
+  await scanImage(srcUrl, tabId, 'manual')
+}
+
+async function scanImageFromAutoScan(srcUrl: string, tabId: number) {
+  await scanImage(srcUrl, tabId, 'auto')
+}
+
+async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto') {
   try {
     if (!isSupportedImageUrl(srcUrl)) {
       throw new Error('只支持 PNG/JPG/JPEG/WebP 图片')
     }
     const decoded = await decodeImageUrl(srcUrl)
     const bundle = await extractCandidatesFromTab(tabId, decoded.text, srcUrl, decoded.mime)
-    const ingest = await sendToSmartExtract(bundle)
+    const ingest = await sendToSmartExtract(bundle, mode)
     await chrome.tabs.sendMessage(tabId, { type: 'boltqr:show-result', bundle, ingest })
   } catch (err) {
+    if (mode === 'auto') return
     const message = err instanceof Error ? err.message : String(err)
     try {
       await chrome.tabs.sendMessage(tabId, { type: 'boltqr:decode-error', message })
@@ -110,10 +128,13 @@ async function loadHelperSettings(): Promise<HelperSettings> {
 }
 
 
-async function sendToSmartExtract(bundle: CandidateBundle): Promise<IngestSummary> {
+async function sendToSmartExtract(bundle: CandidateBundle, mode: 'manual' | 'auto'): Promise<IngestSummary> {
   const settings = await loadHelperSettings()
   if (!settings.enabled) {
     return { ok: false, helperEndpoint: settings.endpoint, error: '候选上报已在设置中关闭' }
+  }
+  if (mode === 'auto' && settings.manualOnly) {
+    return { ok: false, helperEndpoint: settings.endpoint, error: '设置为仅手动识别时上报候选' }
   }
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json' }
