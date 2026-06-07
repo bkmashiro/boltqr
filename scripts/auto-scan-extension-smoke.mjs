@@ -1,16 +1,19 @@
 import { chromium } from 'playwright'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import assert from 'node:assert/strict'
 import QRCode from 'qrcode'
 
 const distExtension = resolve(process.cwd(), 'dist-extension')
+const zxingReaderWasm = readFileSync(resolve(distExtension, 'zxing_reader.wasm'))
+const qrTextValue = 'https://example.com/downloads/archive.zip'
 
 const fixtureHtml = `
   <!doctype html>
   <html>
     <head><meta charset="utf-8" /><title>Auto Scan Fixture</title></head>
     <body>
-      <h1>Auto Scan Smoke Fixture</h1>
+      <h1>Auto Scan Fixture</h1>
       <img
         id="likely-qr"
         src="https://example.com/assets/download-qr.png"
@@ -41,33 +44,102 @@ const fixtureHtml = `
 async function installChromeStub(page) {
   await page.evaluate(() => {
     const sentMessages = []
+    const showResultMessages = []
     const installedHandlers = []
     const contextMenuCalls = []
+    const runtimeMessageListeners = []
+
+    function makeSendResponsePromise() {
+      let resolved = false
+      let value
+      let resolveFn = () => {}
+      const promise = new Promise((resolve) => {
+        resolveFn = (next) => {
+          resolved = true
+          value = next
+          resolve(next)
+        }
+      })
+      return {
+        get: () => (resolved ? value : undefined),
+        promise,
+        fn: resolveFn,
+        isDone: () => resolved,
+      }
+    }
+
+    async function dispatchRuntimeMessage(message, sender) {
+      for (const listener of runtimeMessageListeners) {
+        const responseHolder = makeSendResponsePromise()
+        let directResult
+
+        try {
+          directResult = listener(message, sender, responseHolder.fn)
+          if (directResult && typeof directResult.then === 'function') {
+            directResult = await directResult
+          }
+        } catch {
+          directResult = undefined
+        }
+
+        if (directResult === true) {
+          const timeout = new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(responseHolder.get())
+            }, 3000)
+          })
+          return Promise.race([responseHolder.promise, timeout])
+        }
+
+        if (responseHolder.isDone()) {
+          return responseHolder.get()
+        }
+
+        if (directResult !== undefined) {
+          return directResult
+        }
+      }
+      return undefined
+    }
 
     window.__boltqrAutoScanMessages = sentMessages
+    window.__boltqrShowResultMessages = showResultMessages
     window.__boltqrContextMenuCalls = contextMenuCalls
     window.__boltqrInstalledHandlers = installedHandlers
 
     window.chrome = {
       runtime: {
-        onMessage: { addListener: () => undefined },
+        onMessage: {
+          addListener: (handler) => {
+            runtimeMessageListeners.push(handler)
+          },
+        },
         onInstalled: {
           addListener: (handler) => {
             installedHandlers.push(handler)
             setTimeout(() => handler({ reason: 'install' }), 0)
           },
         },
-        sendMessage: async (message) => {
+        sendMessage: async (message, callback) => {
           sentMessages.push(message)
-          return { ok: true }
+          const response = await dispatchRuntimeMessage(message, {
+            tab: {
+              id: 1,
+              url: window.location.href,
+            },
+          })
+          if (typeof callback === 'function') callback(response)
+          return response
         },
-        getURL: (asset) => `chrome-extension://test/${asset}`,
+        getURL: (asset) => `https://example.com/assets/${asset}`,
       },
       contextMenus: {
         create: (opts) => {
           contextMenuCalls.push(opts)
         },
-        onClicked: { addListener: () => undefined },
+        onClicked: {
+          addListener: () => undefined,
+        },
       },
       storage: {
         local: {
@@ -78,14 +150,24 @@ async function installChromeStub(page) {
         },
       },
       tabs: {
-        sendMessage: async () => ({ ok: true }),
+        sendMessage: async (_tabId, message) => {
+          const response = await dispatchRuntimeMessage(message, {
+            tab: {
+              id: _tabId,
+            },
+          })
+          if (message?.type === 'boltqr:show-result' || message?.type === 'boltqr:decode-error') {
+            showResultMessages.push(message)
+          }
+          return response
+        },
       },
     }
   })
 }
 
 async function makeQrPngBuffer() {
-  const dataUrl = await QRCode.toDataURL('https://example.com/downloads/archive.zip', {
+  const dataUrl = await QRCode.toDataURL(qrTextValue, {
     width: 160,
     margin: 1,
     errorCorrectionLevel: 'M',
@@ -97,12 +179,29 @@ async function launchFixturePage() {
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext()
   const qrPng = await makeQrPngBuffer()
-  await context.route('https://example.com/assets/*.png', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'image/png',
-      body: qrPng,
-    })
+  await context.route('https://example.com/assets/*', async (route) => {
+    const url = new URL(route.request().url())
+    const pathname = url.pathname
+
+    if (pathname.endsWith('.png')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: qrPng,
+      })
+      return
+    }
+
+    if (pathname.endsWith('zxing_reader.wasm')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/wasm',
+        body: zxingReaderWasm,
+      })
+      return
+    }
+
+    await route.abort()
   })
   const page = await context.newPage()
 
@@ -119,19 +218,18 @@ async function closeFixture(fixture) {
   await fixture.browser.close()
 }
 
-async function waitForAutoScanMessage(page) {
+async function waitFor(page, condition, failureLabel) {
   const deadline = Date.now() + 8_000
   while (Date.now() < deadline) {
-    const hasMessage = await page.evaluate(() =>
-      window.__boltqrAutoScanMessages?.some((msg) => msg?.type === 'boltqr:auto-scan-image') === true,
-    )
+    const hasMessage = await page.evaluate(condition)
     if (hasMessage) return
     await page.waitForTimeout(100)
   }
 
   const debugState = await page.evaluate(() => ({
     started: document.documentElement.dataset.boltqrAutoScanStarted,
-    messages: window.__boltqrAutoScanMessages,
+    autoScanMessages: window.__boltqrAutoScanMessages,
+    showResultMessages: window.__boltqrShowResultMessages,
     contextMenus: window.__boltqrContextMenuCalls,
     images: Array.from(document.images).map((img) => ({
       id: img.id,
@@ -142,13 +240,30 @@ async function waitForAutoScanMessage(page) {
       naturalHeight: img.naturalHeight,
     })),
   }))
-  throw new Error(`Timed out waiting for auto-scan message: ${JSON.stringify(debugState)}`)
+  throw new Error(`Timed out waiting for ${failureLabel}: ${JSON.stringify(debugState)}`)
 }
 
-async function testAutoScanDispatchesOnlySuspectedQr() {
+async function waitForAutoScanMessage(page) {
+  await waitFor(
+    page,
+    () => window.__boltqrAutoScanMessages?.some((msg) => msg?.type === 'boltqr:auto-scan-image') === true,
+    'auto-scan message',
+  )
+}
+
+async function waitForAutoScanResult(page) {
+  await waitFor(
+    page,
+    () => window.__boltqrShowResultMessages?.some((msg) => msg?.type === 'boltqr:show-result') === true,
+    'show-result message',
+  )
+}
+
+async function testAutoScanDispatchesAndShowResult() {
   const fixture = await launchFixturePage()
   try {
     await waitForAutoScanMessage(fixture.page)
+    await waitForAutoScanResult(fixture.page)
 
     const messages = await fixture.page.evaluate(() => window.__boltqrAutoScanMessages)
     assert.deepEqual(messages, [
@@ -157,6 +272,17 @@ async function testAutoScanDispatchesOnlySuspectedQr() {
         srcUrl: 'https://example.com/assets/download-qr.png',
       },
     ])
+
+    const showResultMessages = await fixture.page.evaluate(() => window.__boltqrShowResultMessages)
+    assert.equal(showResultMessages.length, 1)
+
+    const showResult = showResultMessages[0]
+    assert.equal(showResult.type, 'boltqr:show-result')
+    assert.equal(showResult.bundle?.qrText, qrTextValue)
+    assert.equal(showResult.bundle?.qrUrl, qrTextValue)
+    assert.ok(showResult.ingest && typeof showResult.ingest === 'object', 'background should include ingest summary')
+    assert.equal(showResult.ingest?.helperEndpoint, 'http://127.0.0.1:17321')
+    assert.ok('ok' in showResult.ingest)
 
     const contextMenuCalls = await fixture.page.evaluate(() => window.__boltqrContextMenuCalls)
     assert.ok(
@@ -194,6 +320,6 @@ async function testAutoScanDedupesAfterDomMutation() {
   }
 }
 
-await testAutoScanDispatchesOnlySuspectedQr()
+await testAutoScanDispatchesAndShowResult()
 await testAutoScanDedupesAfterDomMutation()
 console.log('auto-scan extension smoke passed')
