@@ -60,7 +60,7 @@ async function waitForExtensionTarget(context, timeoutMs) {
   return null
 }
 
-function makeHtmlFixture() {
+function makeHtmlFixture(imageUrl) {
   return `
     <!doctype html>
     <html lang="en">
@@ -78,7 +78,7 @@ function makeHtmlFixture() {
         <p>QR text: ${FIXTURE_QR_TEXT}</p>
         <img
           id="manual-target"
-          src="${QR_IMAGE_PATH}"
+          src="${imageUrl}"
           width="180"
           height="180"
           alt="profile avatar icon"
@@ -89,8 +89,8 @@ function makeHtmlFixture() {
   `
 }
 
-function createFixtureServer({ qrImageBuffer }) {
-  const html = makeHtmlFixture()
+function createFixtureServer({ imageUrl }) {
+  const html = makeHtmlFixture(imageUrl)
   const server = createServer((req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1')
     const headers = { 'cache-control': 'no-store, no-cache, must-revalidate, max-age=0' }
@@ -104,12 +104,6 @@ function createFixtureServer({ qrImageBuffer }) {
     if (url.pathname === FIXTURE_PATH) {
       res.writeHead(200, { ...headers, 'content-type': 'text/html; charset=utf-8' })
       res.end(html)
-      return
-    }
-
-    if (url.pathname === QR_IMAGE_PATH) {
-      res.writeHead(200, { ...headers, 'content-type': 'image/png', 'content-length': qrImageBuffer.length })
-      res.end(qrImageBuffer)
       return
     }
 
@@ -132,6 +126,39 @@ function createFixtureServer({ qrImageBuffer }) {
           server.close((err) => (err ? fail(err) : done()))
         }),
         url: `http://127.0.0.1:${address.port}${FIXTURE_PATH}`,
+        qrUrl: imageUrl,
+      })
+    })
+  })
+}
+
+function createImageFixtureServer({ qrImageBuffer }) {
+  const server = createServer((req, res) => {
+    const url = new URL(req.url || '/', 'http://127.0.0.1')
+    const headers = { 'cache-control': 'no-store, no-cache, must-revalidate, max-age=0' }
+    if (url.pathname === QR_IMAGE_PATH) {
+      res.writeHead(200, { ...headers, 'content-type': 'image/png', 'content-length': qrImageBuffer.length })
+      res.end(qrImageBuffer)
+      return
+    }
+    res.writeHead(404, headers)
+    res.end('not found')
+  })
+
+  return new Promise((resolve, reject) => {
+    server.on('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string' || !address.port) {
+        reject(new Error('Failed to bind image fixture server'))
+        return
+      }
+      resolve({
+        server,
+        port: address.port,
+        close: () => new Promise((done, fail) => {
+          server.close((err) => (err ? fail(err) : done()))
+        }),
         qrUrl: `http://127.0.0.1:${address.port}${QR_IMAGE_PATH}`,
       })
     })
@@ -200,7 +227,8 @@ async function main() {
     margin: 1,
     errorCorrectionLevel: 'M',
   })
-  const fixture = await createFixtureServer({ qrImageBuffer })
+  const imageFixture = await createImageFixtureServer({ qrImageBuffer })
+  const fixture = await createFixtureServer({ imageUrl: imageFixture.qrUrl })
 
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
@@ -257,11 +285,17 @@ async function main() {
         }, FIXTURE_QR_TEXT),
     )
 
+    const scanDebug = await extensionTarget.target.evaluate(() => chrome.storage.local.get('boltqrLastScanDebug'))
+    if (scanDebug?.boltqrLastScanDebug?.phase !== 'visible-tab-screenshot') {
+      throw new Error(`Manual scan did not use screenshot fallback for cross-origin image: ${JSON.stringify(scanDebug)}`)
+    }
+
     console.log('manual-scan mv3 extension load smoke passed')
   } finally {
     await page?.close().catch(() => {})
     await context.close().catch(() => {})
     await fixture.close().catch(() => {})
+    await imageFixture.close().catch(() => {})
     await rm(userDataDir, { recursive: true, force: true }).catch(() => {})
   }
 }

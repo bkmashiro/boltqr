@@ -73,10 +73,12 @@ async function handleMessage(message: unknown): Promise<CandidateExtractionRespo
   if (msg.type === 'boltqr:manual-scan-selected-image' && msg.srcUrl) {
     try {
       const imageData = captureLoadedImageData(msg.srcUrl)
+      const viewportCrop = imageData ? undefined : captureImageViewportCrop(msg.srcUrl)
       return await chrome.runtime.sendMessage({
         type: 'boltqr:manual-scan-image',
         srcUrl: msg.srcUrl,
         ...(imageData ? { imageData } : {}),
+        ...(viewportCrop ? { viewportCrop } : {}),
       })
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -366,6 +368,28 @@ function captureLoadedImageData(imageUrl: string): { width: number; height: numb
     return { width, height, data: Array.from(imageData.data) }
   } catch {
     return undefined
+  }
+}
+
+function captureImageViewportCrop(imageUrl: string): { left: number; top: number; width: number; height: number; devicePixelRatio: number } | undefined {
+  const image = findImageElement(imageUrl)
+  if (!image || !image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) return undefined
+  const rect = image.getBoundingClientRect()
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0
+  const left = Math.max(0, rect.left)
+  const top = Math.max(0, rect.top)
+  const right = Math.min(viewportWidth, rect.right)
+  const bottom = Math.min(viewportHeight, rect.bottom)
+  const width = right - left
+  const height = bottom - top
+  if (width <= 0 || height <= 0) return undefined
+  return {
+    left,
+    top,
+    width,
+    height,
+    devicePixelRatio: window.devicePixelRatio || 1,
   }
 }
 

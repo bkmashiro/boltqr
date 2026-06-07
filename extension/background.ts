@@ -35,6 +35,14 @@ interface PixelImagePayload {
   data: number[]
 }
 
+interface ViewportCropPayload {
+  left: number
+  top: number
+  width: number
+  height: number
+  devicePixelRatio: number
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: MENU_ID,
@@ -57,7 +65,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   void resolveSenderTabContext(sender)
     .then((tab) => {
       if (!tab.id) throw new Error('无法定位当前标签页')
-      return mode === 'auto' ? scanImageFromAutoScan(msg.srcUrl, tab.id, tab.url, msg.imageData) : scanImageFromContextMenu(msg.srcUrl, tab.id, tab.url, msg.imageData)
+      return mode === 'auto'
+        ? scanImageFromAutoScan(msg.srcUrl, tab.id, tab.url, msg.imageData)
+        : scanImageFromContextMenu(msg.srcUrl, tab.id, tab.url, msg.imageData, msg.viewportCrop)
     })
     .then((result) => sendResponse(result))
     .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }))
@@ -86,20 +96,20 @@ async function ensureZXing() {
   await zxingReady
 }
 
-async function scanImageFromContextMenu(srcUrl: string, tabId: number, pageUrl?: string, imageData?: PixelImagePayload): Promise<{ ok: boolean; error?: string }> {
-  return scanImage(srcUrl, tabId, 'manual', pageUrl, imageData)
+async function scanImageFromContextMenu(srcUrl: string, tabId: number, pageUrl?: string, imageData?: PixelImagePayload, viewportCrop?: ViewportCropPayload): Promise<{ ok: boolean; error?: string }> {
+  return scanImage(srcUrl, tabId, 'manual', pageUrl, imageData, viewportCrop)
 }
 
 async function scanImageFromAutoScan(srcUrl: string, tabId: number, pageUrl?: string, imageData?: PixelImagePayload): Promise<{ ok: boolean; error?: string }> {
   return scanImage(srcUrl, tabId, 'auto', pageUrl, imageData)
 }
 
-async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto', pageUrl?: string, imageData?: PixelImagePayload): Promise<{ ok: boolean; error?: string }> {
+async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto', pageUrl?: string, imageData?: PixelImagePayload, viewportCrop?: ViewportCropPayload): Promise<{ ok: boolean; error?: string }> {
   try {
     if (!isSupportedImageUrl(srcUrl)) {
       throw new Error('只支持 PNG/JPG/JPEG/WebP 图片')
     }
-    const decoded = await decodeImageWithOptionalPixels(srcUrl, imageData, { mode, pageUrl })
+    const decoded = await decodeImageWithOptionalPixels(srcUrl, imageData, viewportCrop, { mode, pageUrl, tabId })
     const bundle = await extractCandidatesFromTab(tabId, decoded.text, srcUrl, decoded.mime)
     const ingest = await sendToSmartExtract(bundle, mode)
     await chrome.tabs.sendMessage(tabId, { type: 'boltqr:show-result', bundle, ingest })
@@ -130,7 +140,7 @@ function isSupportedImageUrl(url: string): boolean {
   return /\.(png|jpe?g|webp)(?:[?#].*)?$/i.test(url)
 }
 
-async function decodeImageWithOptionalPixels(srcUrl: string, payload: PixelImagePayload | undefined, context: { mode: 'manual' | 'auto'; pageUrl?: string }): Promise<{ text: string; mime: string }> {
+async function decodeImageWithOptionalPixels(srcUrl: string, payload: PixelImagePayload | undefined, viewportCrop: ViewportCropPayload | undefined, context: { mode: 'manual' | 'auto'; pageUrl?: string; tabId: number }): Promise<{ text: string; mime: string }> {
   if (payload) {
     try {
       return await decodePixelImageData(srcUrl, payload, context)
@@ -145,7 +155,77 @@ async function decodeImageWithOptionalPixels(srcUrl: string, payload: PixelImage
       })
     }
   }
+  if (context.mode === 'manual' && viewportCrop) {
+    try {
+      return await decodeVisibleTabCrop(srcUrl, viewportCrop, context)
+    } catch (err) {
+      await recordScanDebug({
+        srcUrl,
+        mode: context.mode,
+        pageUrl: context.pageUrl,
+        phase: 'visible-tab-screenshot-error',
+        error: err instanceof Error ? err.message : String(err),
+        createdAt: new Date().toISOString(),
+      })
+    }
+  }
   return decodeImageUrl(srcUrl, context)
+}
+
+async function decodeVisibleTabCrop(srcUrl: string, crop: ViewportCropPayload, context: { mode: 'manual' | 'auto'; pageUrl?: string; tabId: number }): Promise<{ text: string; mime: string }> {
+  await ensureZXing()
+  if (!isValidViewportCrop(crop)) throw new Error('页面截图裁剪区域无效')
+  const dataUrl = await captureCurrentVisibleTabPng()
+  const blob = await (await fetch(dataUrl)).blob()
+  const bitmap = await createImageBitmap(blob)
+  const dpr = Math.max(1, crop.devicePixelRatio || 1)
+  const sx = clamp(Math.round(crop.left * dpr), 0, bitmap.width - 1)
+  const sy = clamp(Math.round(crop.top * dpr), 0, bitmap.height - 1)
+  const sw = clamp(Math.round(crop.width * dpr), 1, bitmap.width - sx)
+  const sh = clamp(Math.round(crop.height * dpr), 1, bitmap.height - sy)
+  const canvas = new OffscreenCanvas(sw, sh)
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) throw new Error('无法创建页面截图裁剪 canvas')
+  ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh)
+  bitmap.close()
+  const imageData = ctx.getImageData(0, 0, sw, sh)
+  await recordScanDebug({
+    srcUrl,
+    mode: context.mode,
+    pageUrl: context.pageUrl,
+    phase: 'visible-tab-screenshot',
+    ok: true,
+    createdAt: new Date().toISOString(),
+  })
+  const text = await decodeQrFromImageData(imageData)
+  return { text, mime: 'image/png' }
+}
+
+function isValidViewportCrop(crop: ViewportCropPayload): boolean {
+  return Number.isFinite(crop.left)
+    && Number.isFinite(crop.top)
+    && Number.isFinite(crop.width)
+    && Number.isFinite(crop.height)
+    && Number.isFinite(crop.devicePixelRatio)
+    && crop.width > 0
+    && crop.height > 0
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function captureCurrentVisibleTabPng(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.captureVisibleTab({ format: 'png' }, (dataUrl) => {
+      const err = chrome.runtime.lastError
+      if (err) {
+        reject(new Error(err.message || 'captureVisibleTab failed'))
+        return
+      }
+      resolve(dataUrl)
+    })
+  })
 }
 
 async function decodePixelImageData(srcUrl: string, payload: PixelImagePayload, context: { mode: 'manual' | 'auto'; pageUrl?: string }): Promise<{ text: string; mime: string }> {
