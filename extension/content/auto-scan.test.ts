@@ -34,6 +34,49 @@ describe('auto-scan planner/filter', () => {
     expect(planned[0].score).toBeGreaterThan(planned[1].score)
   })
 
+  it('prioritizes QR-ish candidates and caps planning at 6 when mixed with noisy images', () => {
+    const planned = planAutoScanBatch([
+      ...Array.from({ length: 30 }, (_, index) =>
+        image({
+          url: `https://cdn.example.com/noise-${index}.png`,
+          id: `noise-${index}`,
+          width: 120 + (index % 5) * 4,
+          height: 120 + (index % 5) * 3,
+          naturalWidth: 240,
+          naturalHeight: 240,
+          alt: 'site logo avatar',
+          className: 'avatar social-icon',
+        }),
+      ),
+      ...Array.from({ length: 12 }, (_, index) =>
+        image({
+          url: `https://cdn.example.com/qr-${index}.png`,
+          id: `qr-${index}`,
+          width: 160,
+          height: 160,
+          naturalWidth: 320,
+          naturalHeight: 320,
+          alt: `微信 扫码 下载 ${index}`,
+          className: 'qrcode-image',
+        }),
+      ),
+      image({
+        url: 'https://cdn.example.com/button-similar.png',
+        id: 'plain-button',
+        width: 160,
+        height: 160,
+        naturalWidth: 320,
+        naturalHeight: 320,
+        alt: 'plain button icon',
+        className: 'cta',
+      }),
+    ], { maxBatchSize: 6 })
+
+    expect(planned).toHaveLength(6)
+    expect(new Set(planned.map((scan) => scan.url)).size).toBe(6)
+    expect(planned.every((scan) => /\/qr-\d+\.png$/.test(scan.url))).toBe(true)
+  })
+
   it('rejects tiny icons, logos/avatars/social icons, hidden candidates, unsupported extensions, and huge hero/photo-like images', () => {
     const rejected = [
       image({ url: 'https://cdn.example.com/favicon.png', width: 24, height: 24, naturalWidth: 24, naturalHeight: 24, alt: 'qr?' }),
@@ -67,21 +110,42 @@ describe('auto-scan planner/filter', () => {
     ])
   })
 
-  it('dedupes duplicate URLs/cache keys stably', () => {
+  it('dedupes mutation-like reinsertion when cache key is unchanged', () => {
+    const base = image({
+      url: 'https://cdn.example.com/qr.png',
+      currentSrc: 'https://cdn.example.com/rendered-qr.png',
+      id: 'qr-slot',
+      alt: 'qr code',
+    })
+
     const planned = planAutoScanBatch([
-      image({ url: 'https://cdn.example.com/qr.png', currentSrc: 'https://cdn.example.com/rendered-qr.png', id: 'first', alt: 'qr code' }),
-      image({ url: 'https://cdn.example.com/qr.png', currentSrc: 'https://cdn.example.com/rendered-qr.png', id: 'first', alt: 'same duplicate with higher text boost QR' }),
-      image({ url: 'https://cdn.example.com/qr.png', currentSrc: 'https://cdn.example.com/rendered-qr-v2.png', id: 'second', alt: 'qr code' }),
+      base,
+      {
+        ...base,
+        alt: '二维码 扫码',
+      },
+      {
+        ...base,
+        className: 'refreshed',
+      },
+      image({
+        url: 'https://cdn.example.com/qr-other.png',
+        currentSrc: 'https://cdn.example.com/rendered-qr-other.png',
+        id: 'qr-slot-2',
+        alt: 'qr code',
+      }),
     ])
 
+    expect(planned).toHaveLength(2)
     expect(planned.map((scan) => scan.url)).toEqual([
       'https://cdn.example.com/rendered-qr.png',
-      'https://cdn.example.com/rendered-qr-v2.png',
+      'https://cdn.example.com/rendered-qr-other.png',
     ])
-    expect(planned[0].descriptor.id).toBe('first')
+    expect(planned[0].cacheKey).toBe(makeScanCacheKey(base))
+    expect(planned.every((scan, index) => scan.cacheKey !== planned[0].cacheKey || index === 0)).toBe(true)
   })
 
-  it('changes cache key when element id/url changes enough to rescan a changed image', () => {
+  it('changes cache key when element identity or source changes enough to require re-scan', () => {
     const base = image({ url: 'https://cdn.example.com/qr.png', id: 'slot-a', elementKey: 'img-1' })
 
     expect(makeScanCacheKey(base)).toBe(makeScanCacheKey({ ...base, alt: 'different caption text' }))
