@@ -25,12 +25,26 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const msg = message as any
-  if (msg?.type !== 'boltqr:auto-scan-image' || !msg.srcUrl || !sender.tab?.id) return undefined
-  void scanImageFromAutoScan(msg.srcUrl, sender.tab.id)
-    .then(() => sendResponse({ ok: true }))
+  if (msg?.type !== 'boltqr:auto-scan-image' || !msg.srcUrl) return undefined
+  void resolveSenderTabId(sender)
+    .then((tabId) => {
+      if (!tabId) throw new Error('无法定位当前标签页')
+      return scanImageFromAutoScan(msg.srcUrl, tabId)
+    })
+    .then((result) => sendResponse(result))
     .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }))
   return true
 })
+
+async function resolveSenderTabId(sender: chrome.runtime.MessageSender): Promise<number | undefined> {
+  if (sender.tab?.id) return sender.tab.id
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+    return tabs[0]?.id
+  } catch {
+    return undefined
+  }
+}
 
 async function ensureZXing() {
   if (!zxingReady) {
@@ -48,11 +62,11 @@ async function scanImageFromContextMenu(srcUrl: string, tabId: number) {
   await scanImage(srcUrl, tabId, 'manual')
 }
 
-async function scanImageFromAutoScan(srcUrl: string, tabId: number) {
-  await scanImage(srcUrl, tabId, 'auto')
+async function scanImageFromAutoScan(srcUrl: string, tabId: number): Promise<{ ok: boolean; error?: string }> {
+  return scanImage(srcUrl, tabId, 'auto')
 }
 
-async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto') {
+async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto'): Promise<{ ok: boolean; error?: string }> {
   try {
     if (!isSupportedImageUrl(srcUrl)) {
       throw new Error('只支持 PNG/JPG/JPEG/WebP 图片')
@@ -61,14 +75,16 @@ async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto')
     const bundle = await extractCandidatesFromTab(tabId, decoded.text, srcUrl, decoded.mime)
     const ingest = await sendToSmartExtract(bundle, mode)
     await chrome.tabs.sendMessage(tabId, { type: 'boltqr:show-result', bundle, ingest })
+    return { ok: true }
   } catch (err) {
-    if (mode === 'auto') return
     const message = err instanceof Error ? err.message : String(err)
+    if (mode === 'auto') return { ok: false, error: message }
     try {
       await chrome.tabs.sendMessage(tabId, { type: 'boltqr:decode-error', message })
     } catch {
       // Content script may be unavailable on chrome:// pages.
     }
+    return { ok: false, error: message }
   }
 }
 

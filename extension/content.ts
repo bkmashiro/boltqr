@@ -70,6 +70,12 @@ function startAutoScan(): void {
     }
   })
   observer.observe(document.documentElement, { childList: true, subtree: true })
+
+  document.addEventListener('load', (event) => {
+    if (event.target instanceof HTMLImageElement) {
+      scheduleAutoScan(AUTO_SCAN_MUTATION_DELAY_MS)
+    }
+  }, true)
 }
 
 function scheduleAutoScan(delayMs = 0): void {
@@ -81,7 +87,11 @@ function scheduleAutoScan(delayMs = 0): void {
   }
   const requestIdle = (globalThis as any).requestIdleCallback as ((cb: () => void, opts?: { timeout: number }) => number) | undefined
   if (requestIdle) {
-    requestIdle(run, { timeout: Math.max(500, delayMs) })
+    const fallback = setTimeout(run, Math.max(750, delayMs + 250))
+    requestIdle(() => {
+      clearTimeout(fallback)
+      run()
+    }, { timeout: Math.max(500, delayMs) })
     return
   }
   setTimeout(run, delayMs)
