@@ -72,7 +72,12 @@ async function handleMessage(message: unknown): Promise<CandidateExtractionRespo
   }
   if (msg.type === 'boltqr:manual-scan-selected-image' && msg.srcUrl) {
     try {
-      return await chrome.runtime.sendMessage({ type: 'boltqr:manual-scan-image', srcUrl: msg.srcUrl })
+      const imageData = captureLoadedImageData(msg.srcUrl)
+      return await chrome.runtime.sendMessage({
+        type: 'boltqr:manual-scan-image',
+        srcUrl: msg.srcUrl,
+        ...(imageData ? { imageData } : {}),
+      })
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
@@ -187,7 +192,12 @@ async function drainAutoScanQueue(): Promise<void> {
 
 async function requestAutoDecode(srcUrl: string): Promise<void> {
   try {
-    await chrome.runtime.sendMessage({ type: 'boltqr:auto-scan-image', srcUrl })
+    const imageData = captureLoadedImageData(srcUrl)
+    await chrome.runtime.sendMessage({
+      type: 'boltqr:auto-scan-image',
+      srcUrl,
+      ...(imageData ? { imageData } : {}),
+    })
   } catch {
     // Content scripts can run on pages where the extension context is torn down; keep auto-scan silent.
   }
@@ -339,6 +349,29 @@ function findImageElement(imageUrl?: string): HTMLImageElement | undefined {
     }
   }
   return undefined
+}
+
+function captureLoadedImageData(imageUrl: string): { width: number; height: number; data: number[] } | undefined {
+  const image = findImageElement(imageUrl)
+  if (!image || !image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) return undefined
+
+  const maxSide = 768
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight))
+  const width = Math.max(1, Math.round(image.naturalWidth * scale))
+  const height = Math.max(1, Math.round(image.naturalHeight * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return undefined
+
+  try {
+    ctx.drawImage(image, 0, 0, width, height)
+    const imageData = ctx.getImageData(0, 0, width, height)
+    return { width, height, data: Array.from(imageData.data) }
+  } catch {
+    return undefined
+  }
 }
 
 function showInlineResult(message: ShowResultMessage, settings: ResultDisplaySettings): boolean {

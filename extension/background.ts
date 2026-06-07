@@ -29,6 +29,12 @@ interface ScanDebugInfo {
   createdAt: string
 }
 
+interface PixelImagePayload {
+  width: number
+  height: number
+  data: number[]
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: MENU_ID,
@@ -39,7 +45,8 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== MENU_ID || !info.srcUrl || !tab?.id) return
-  void scanImageFromContextMenu(info.srcUrl, tab.id, tab.url)
+  void chrome.tabs.sendMessage(tab.id, { type: 'boltqr:manual-scan-selected-image', srcUrl: info.srcUrl })
+    .catch(() => scanImageFromContextMenu(info.srcUrl!, tab.id!, tab.url))
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -50,7 +57,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   void resolveSenderTabContext(sender)
     .then((tab) => {
       if (!tab.id) throw new Error('无法定位当前标签页')
-      return mode === 'auto' ? scanImageFromAutoScan(msg.srcUrl, tab.id, tab.url) : scanImageFromContextMenu(msg.srcUrl, tab.id, tab.url)
+      return mode === 'auto' ? scanImageFromAutoScan(msg.srcUrl, tab.id, tab.url, msg.imageData) : scanImageFromContextMenu(msg.srcUrl, tab.id, tab.url, msg.imageData)
     })
     .then((result) => sendResponse(result))
     .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }))
@@ -79,20 +86,20 @@ async function ensureZXing() {
   await zxingReady
 }
 
-async function scanImageFromContextMenu(srcUrl: string, tabId: number, pageUrl?: string): Promise<{ ok: boolean; error?: string }> {
-  return scanImage(srcUrl, tabId, 'manual', pageUrl)
+async function scanImageFromContextMenu(srcUrl: string, tabId: number, pageUrl?: string, imageData?: PixelImagePayload): Promise<{ ok: boolean; error?: string }> {
+  return scanImage(srcUrl, tabId, 'manual', pageUrl, imageData)
 }
 
-async function scanImageFromAutoScan(srcUrl: string, tabId: number, pageUrl?: string): Promise<{ ok: boolean; error?: string }> {
-  return scanImage(srcUrl, tabId, 'auto', pageUrl)
+async function scanImageFromAutoScan(srcUrl: string, tabId: number, pageUrl?: string, imageData?: PixelImagePayload): Promise<{ ok: boolean; error?: string }> {
+  return scanImage(srcUrl, tabId, 'auto', pageUrl, imageData)
 }
 
-async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto', pageUrl?: string): Promise<{ ok: boolean; error?: string }> {
+async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto', pageUrl?: string, imageData?: PixelImagePayload): Promise<{ ok: boolean; error?: string }> {
   try {
     if (!isSupportedImageUrl(srcUrl)) {
       throw new Error('只支持 PNG/JPG/JPEG/WebP 图片')
     }
-    const decoded = await decodeImageUrl(srcUrl, { mode, pageUrl })
+    const decoded = imageData ? await decodePixelImageData(srcUrl, imageData, { mode, pageUrl }) : await decodeImageUrl(srcUrl, { mode, pageUrl })
     const bundle = await extractCandidatesFromTab(tabId, decoded.text, srcUrl, decoded.mime)
     const ingest = await sendToSmartExtract(bundle, mode)
     await chrome.tabs.sendMessage(tabId, { type: 'boltqr:show-result', bundle, ingest })
@@ -121,6 +128,31 @@ function isSupportedImageUrl(url: string): boolean {
   if (url.startsWith('data:image/png') || url.startsWith('data:image/jpeg') || url.startsWith('data:image/webp')) return true
   if (url.startsWith('blob:')) return true
   return /\.(png|jpe?g|webp)(?:[?#].*)?$/i.test(url)
+}
+
+async function decodePixelImageData(srcUrl: string, payload: PixelImagePayload, context: { mode: 'manual' | 'auto'; pageUrl?: string }): Promise<{ text: string; mime: string }> {
+  await ensureZXing()
+  if (!isValidPixelPayload(payload)) throw new Error('页面图片像素数据无效')
+  await recordScanDebug({
+    srcUrl,
+    mode: context.mode,
+    pageUrl: context.pageUrl,
+    phase: 'loaded-image-pixels',
+    ok: true,
+    createdAt: new Date().toISOString(),
+  })
+  const imageData = new ImageData(new Uint8ClampedArray(payload.data), payload.width, payload.height)
+  const text = await decodeQrFromImageData(imageData)
+  return { text, mime: '' }
+}
+
+function isValidPixelPayload(payload: PixelImagePayload): boolean {
+  return Number.isInteger(payload.width)
+    && Number.isInteger(payload.height)
+    && payload.width > 0
+    && payload.height > 0
+    && Array.isArray(payload.data)
+    && payload.data.length === payload.width * payload.height * 4
 }
 
 async function decodeImageUrl(srcUrl: string, context: { mode: 'manual' | 'auto'; pageUrl?: string }): Promise<{ text: string; mime: string }> {
@@ -158,6 +190,11 @@ async function decodeImageUrl(srcUrl: string, context: { mode: 'manual' | 'auto'
   ctx.drawImage(bitmap, 0, 0)
   const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height)
   bitmap.close()
+  const text = await decodeQrFromImageData(imageData)
+  return { text, mime: blob.type || '' }
+}
+
+async function decodeQrFromImageData(imageData: ImageData): Promise<string> {
   const results = await readBarcodes(imageData, {
     formats: ['QRCode'],
     tryHarder: false,
@@ -168,7 +205,7 @@ async function decodeImageUrl(srcUrl: string, context: { mode: 'manual' | 'auto'
   })
   const first = results[0]
   if (!first?.isValid || !first.text) throw new Error('未识别到二维码')
-  return { text: first.text, mime: blob.type || '' }
+  return first.text
 }
 
 async function recordScanDebug(info: ScanDebugInfo): Promise<void> {

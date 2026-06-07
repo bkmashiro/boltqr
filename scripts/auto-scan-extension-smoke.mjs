@@ -294,9 +294,11 @@ async function launchFixturePage({ fixtureContent = fixtureHtml, chromeStubOptio
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext()
   const qrPng = await makeQrPngBuffer()
+  const assetFetchCounts = new Map()
   await context.route('https://example.com/assets/*', async (route) => {
     const url = new URL(route.request().url())
     const pathname = url.pathname
+    assetFetchCounts.set(pathname, (assetFetchCounts.get(pathname) || 0) + 1)
 
     if (failedImagePathPattern && failedImagePathPattern.test(pathname)) {
       await route.fulfill({
@@ -334,7 +336,7 @@ async function launchFixturePage({ fixtureContent = fixtureHtml, chromeStubOptio
   await page.addScriptTag({ path: `${distExtension}/background.js` })
   await page.addScriptTag({ path: `${distExtension}/content.js` })
 
-  return { browser, context, page }
+  return { browser, context, page, assetFetchCounts }
 }
 
 async function closeFixture(fixture) {
@@ -525,6 +527,60 @@ async function testManualWebpHttpFailureRecordsDiagnostics() {
     assert.equal(debug?.mode, 'manual')
     assert.equal(debug?.phase, 'scan-error')
     assert.match(debug?.error || '', /HTTP 404|HTTP 403/)
+  } finally {
+    await closeFixture(fixture)
+  }
+}
+
+async function testManualScanUsesLoadedImagePixelsBeforeRefetching() {
+  const qrDataUrl = await QRCode.toDataURL(qrTextValue, {
+    width: 160,
+    margin: 1,
+    errorCorrectionLevel: 'M',
+  })
+  const fixture = await launchFixturePage({
+    fixtureContent: `
+      <!doctype html>
+      <html>
+        <head><meta charset="utf-8" /><title>Loaded Pixel Fixture</title></head>
+        <body>
+          <img
+            id="likely-qr"
+            src="${qrDataUrl}"
+            width="160"
+            height="160"
+            alt="微信 扫码 下载 二维码"
+          />
+        </body>
+      </html>
+    `,
+  })
+  try {
+    await fixture.page.evaluate(() => window.__boltqrShowResultMessages.length = 0)
+
+    await fixture.page.evaluate((srcUrl) => {
+      for (const handler of window.__boltqrContextMenuClickHandlers) {
+        handler(
+          {
+            menuItemId: 'boltqr-scan-image',
+            srcUrl,
+          },
+          { id: 1, url: window.location.href },
+        )
+      }
+    }, qrDataUrl)
+
+    await waitForAutoScanResult(fixture.page)
+    const state = await fixture.page.evaluate(() => ({
+      showResultMessages: window.__boltqrShowResultMessages,
+      sentMessages: window.__boltqrAutoScanMessages,
+    }))
+    const showResult = state.showResultMessages[state.showResultMessages.length - 1]
+    assert.equal(showResult?.bundle?.qrText, qrTextValue)
+    const manualMessage = state.sentMessages.find((msg) => msg?.type === 'boltqr:manual-scan-image')
+    assert.equal(manualMessage?.imageData?.width, 160)
+    assert.equal(manualMessage?.imageData?.height, 160)
+    assert.equal(manualMessage?.imageData?.data?.length, 160 * 160 * 4)
   } finally {
     await closeFixture(fixture)
   }
@@ -724,6 +780,7 @@ async function testInlineOverlayStaysAttachedToImageWhenScrolledOffscreen() {
 await testAutoScanDispatchesAndShowResult()
 await testContextMenuClickScansImage()
 await testManualWebpHttpFailureRecordsDiagnostics()
+await testManualScanUsesLoadedImagePixelsBeforeRefetching()
 await testAutoScanDedupesAfterDomMutation()
 await testCandidateSearchCanDisablePageTextExtraction()
 await testInlineOverlayStaysAttachedToImageWhenScrolledOffscreen()
