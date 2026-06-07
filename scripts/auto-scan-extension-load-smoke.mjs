@@ -183,7 +183,7 @@ async function pollUntil(page, label, timeoutMs, evaluator) {
   const state = await page.evaluate(() => ({
     started: document.documentElement.dataset.boltqrAutoScanStarted,
     toastText: document.getElementById('boltqr-toast')?.textContent || null,
-    inlineText: document.getElementById('boltqr-inline-result')?.shadowRoot?.textContent || null,
+    inlineText: document.getElementById('boltqr-inline-marker')?.title || null,
     imageCount: document.images.length,
     images: Array.from(document.images).map((img) => ({
       id: img.id,
@@ -272,24 +272,25 @@ async function main() {
 
     await pollUntil(
       page,
-      `inline result did not show fixture QR text (${FIXTURE_QR_TEXT})`,
+      `local marker did not show fixture QR text (${FIXTURE_QR_TEXT})`,
       TOAST_TIMEOUT_MS,
       () =>
         page.evaluate((expected) => {
-          const inline = document.getElementById('boltqr-inline-result')
-          return !!inline?.shadowRoot && (inline.shadowRoot.textContent || '').includes(expected)
+          const marker = document.getElementById('boltqr-inline-marker')
+          return !!marker && marker.parentElement !== document.documentElement && ((marker.getAttribute('title') || '').includes(expected) || (document.getElementById('boltqr-toast')?.textContent || '').includes(expected))
         }, FIXTURE_QR_TEXT),
     )
 
     const inlineState = await page.evaluate((expected) => {
-      const inline = document.getElementById('boltqr-inline-result')
-      const text = inline?.shadowRoot?.textContent || ''
-      const close = inline?.shadowRoot?.querySelector('[data-boltqr-result-action="close"]')
-      close?.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }))
-      return { text, removed: !document.getElementById('boltqr-inline-result'), includesExpected: text.includes(expected) }
+      const marker = document.getElementById('boltqr-inline-marker')
+      const text = marker?.getAttribute('title') || document.getElementById('boltqr-toast')?.textContent || ''
+      marker?.remove()
+      return { text, removed: !document.getElementById('boltqr-inline-marker'), includesExpected: text.includes(expected), isLocal: marker?.parentElement !== document.documentElement, zIndex: marker ? getComputedStyle(marker).zIndex : '' }
     }, FIXTURE_QR_TEXT)
-    assert.equal(inlineState.includesExpected, true, `Expected inline result to include ${FIXTURE_QR_TEXT}, got: ${inlineState.text}`)
-    assert.equal(inlineState.removed, true, 'Expected inline result close button to remove overlay')
+    assert.equal(inlineState.includesExpected, true, `Expected local marker to include ${FIXTURE_QR_TEXT}, got: ${inlineState.text}`)
+    assert.equal(inlineState.isLocal, true, 'Expected QR result marker to be injected locally near the image')
+    assert.notEqual(inlineState.zIndex, '2147483647', 'Local marker must not use a page-covering max z-index')
+    assert.equal(inlineState.removed, true, 'Expected local marker removal to work')
 
     console.log('auto-scan mv3 extension load smoke passed')
   } finally {

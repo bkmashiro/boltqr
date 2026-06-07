@@ -21,7 +21,7 @@ const AUTO_SCAN_CONCURRENCY = 2
 const AUTO_SCAN_MUTATION_DELAY_MS = 250
 const AUTO_SCAN_INITIAL_DELAY_MS = 150
 
-const INLINE_RESULT_OVERLAY_ID = 'boltqr-inline-result'
+const INLINE_RESULT_OVERLAY_ID = 'boltqr-inline-marker'
 
 const autoScanState = {
   scheduled: false,
@@ -86,7 +86,7 @@ async function handleMessage(message: unknown): Promise<CandidateExtractionRespo
     const resultMessage = msg as ShowResultMessage
     const displaySettings = await loadDisplaySettings()
     const inlineShown = shouldShowInline(displaySettings) ? showInlineResult(resultMessage, displaySettings) : false
-    if (shouldShowToast(displaySettings) || (!inlineShown && displaySettings.resultDisplayMode === 'inline')) {
+    if (shouldShowToast(displaySettings) || inlineShown || (!inlineShown && displaySettings.resultDisplayMode === 'inline')) {
       showToast(renderResult(resultMessage, displaySettings))
     }
   }
@@ -192,12 +192,7 @@ async function drainAutoScanQueue(): Promise<void> {
 
 async function requestAutoDecode(srcUrl: string): Promise<void> {
   try {
-    const imageData = captureLoadedImageData(srcUrl)
-    await chrome.runtime.sendMessage({
-      type: 'boltqr:auto-scan-image',
-      srcUrl,
-      ...(imageData ? { imageData } : {}),
-    })
+    await chrome.runtime.sendMessage({ type: 'boltqr:auto-scan-image', srcUrl })
   } catch {
     // Content scripts can run on pages where the extension context is torn down; keep auto-scan silent.
   }
@@ -376,7 +371,7 @@ function captureLoadedImageData(imageUrl: string): { width: number; height: numb
 
 function showInlineResult(message: ShowResultMessage, settings: ResultDisplaySettings): boolean {
   const image = findImageElement(message.bundle.imageUrl)
-  if (!image) return false
+  if (!image || !image.parentElement) return false
 
   const rect = image.getBoundingClientRect()
   if (rect.width <= 0 || rect.height <= 0) return false
@@ -384,171 +379,82 @@ function showInlineResult(message: ShowResultMessage, settings: ResultDisplaySet
   removeInlineResultOverlay()
 
   const bundle = message.bundle
-  const overlayHost = document.createElement('div')
-  overlayHost.id = INLINE_RESULT_OVERLAY_ID
-  overlayHost.dataset.boltqrInlineResult = '1'
+  const parent = image.parentElement
+  const marker = document.createElement('span')
+  marker.id = INLINE_RESULT_OVERLAY_ID
+  marker.dataset.boltqrInlineResult = '1'
+  marker.dataset.boltqrLocalMarker = '1'
+  marker.textContent = 'QR✓'
+  marker.title = bundle.qrUrl || bundle.qrText || 'BoltQR 识别成功'
+  marker.style.cssText = [
+    'position:absolute',
+    'z-index:1',
+    'pointer-events:none',
+    'display:inline-flex',
+    'align-items:center',
+    'justify-content:center',
+    'height:20px',
+    'min-width:34px',
+    'padding:0 6px',
+    'border-radius:999px',
+    'border:1px solid rgba(250,204,21,.7)',
+    'background:rgba(15,23,42,.82)',
+    'color:#facc15',
+    'font:700 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+    'box-shadow:0 2px 8px rgba(0,0,0,.18)',
+    'box-sizing:border-box',
+  ].join(';')
 
-  const shadow = overlayHost.attachShadow({ mode: 'open' })
-  const style = document.createElement('style')
-  style.textContent = `
-    :host {
-      position: absolute;
-      z-index: 2147483647;
-      pointer-events: none;
-      overflow: visible;
-      box-sizing: border-box;
-      font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    .scrim {
-      position: absolute;
-      inset: 0;
-      border-radius: 10px;
-      background: rgba(15, 23, 42, 0.52);
-      backdrop-filter: grayscale(1) contrast(.85);
-      pointer-events: none;
-      box-sizing: border-box;
-    }
-    .pin {
-      position: absolute;
-      left: 6px;
-      top: 6px;
-      display: grid;
-      gap: 4px;
-      width: min(260px, calc(100% - 12px));
-      min-width: min(96px, calc(100% - 12px));
-      padding: 8px 34px 8px 10px;
-      border: 1px solid rgba(148, 163, 184, .45);
-      border-radius: 10px;
-      color: #f8fafc;
-      background: rgba(15, 23, 42, .92);
-      box-shadow: 0 10px 28px rgba(0, 0, 0, .36);
-      backdrop-filter: blur(8px);
-      box-sizing: border-box;
-      pointer-events: auto;
-      cursor: pointer;
-      transition: transform .12s ease, background .12s ease;
-    }
-    .pin:hover {
-      transform: translateY(-1px);
-      background: rgba(17, 24, 39, .98);
-    }
-    .domain {
-      font-weight: 800;
-      color: #facc15;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .value {
-      color: #e5e7eb;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      max-width: 220px;
-    }
-    .hint {
-      color: #bfdbfe;
-      font-size: 11px;
-    }
-    .close {
-      position: absolute;
-      top: 5px;
-      right: 5px;
-      width: 22px;
-      height: 22px;
-      border: 0;
-      border-radius: 999px;
-      color: #cbd5e1;
-      background: rgba(51, 65, 85, .9);
-      cursor: pointer;
-      pointer-events: auto;
-      font-weight: 800;
-      line-height: 22px;
-      padding: 0;
-    }
-    .close:hover { color: white; background: #ef4444; }
-  `
+  const parentComputed = getComputedStyle(parent)
+  const previousParentPosition = parent.style.position
+  const changedParentPosition = parentComputed.position === 'static'
+  if (changedParentPosition) parent.style.position = 'relative'
 
-  const scrim = document.createElement('div')
-  scrim.className = 'scrim'
-  scrim.setAttribute('part', 'scrim')
-  if (!settings.grayQrOnResult) scrim.style.display = 'none'
+  const previousImageFilter = image.style.filter
+  const previousImageOutline = image.style.outline
+  const previousImageOutlineOffset = image.style.outlineOffset
+  if (settings.grayQrOnResult) {
+    image.style.filter = mergeCssFilter(previousImageFilter, 'grayscale(1) brightness(.72)')
+  }
+  image.style.outline = '2px solid rgba(250, 204, 21, .78)'
+  image.style.outlineOffset = '2px'
+  image.dataset.boltqrInlineResult = '1'
 
-  const pin = document.createElement('button')
-  pin.type = 'button'
-  pin.className = 'pin'
-  pin.setAttribute('part', 'pin')
-  pin.setAttribute('data-boltqr-result-action', 'open-or-copy')
-
-  const closeButton = document.createElement('button')
-  closeButton.type = 'button'
-  closeButton.className = 'close'
-  closeButton.setAttribute('aria-label', '关闭 BoltQR 结果')
-  closeButton.setAttribute('data-boltqr-result-action', 'close')
-  closeButton.textContent = '×'
-
-  const domain = document.createElement('div')
-  domain.className = 'domain'
-  const value = document.createElement('div')
-  value.className = 'value'
-  const hint = document.createElement('div')
-  hint.className = 'hint'
-
-  const safeUrl = isOpenableUrl(bundle.qrUrl) ? bundle.qrUrl : undefined
-  domain.textContent = safeUrl ? hostnameFromUrl(safeUrl) : '文本二维码'
-  value.textContent = compactResultText(bundle.qrText)
-  hint.textContent = safeUrl
-    ? (settings.openBehavior === 'same-tab' ? '点击在当前页打开 ↗' : '点击新标签打开 ↗')
-    : '点击复制文本'
-
-  pin.append(domain, value, hint, closeButton)
-  shadow.append(style, scrim, pin)
-  document.documentElement.appendChild(overlayHost)
+  parent.appendChild(marker)
 
   const updatePosition = () => {
-    if (!document.documentElement.contains(image)) {
+    if (!document.documentElement.contains(image) || !document.documentElement.contains(marker)) {
       removeInlineResultOverlay()
       return
     }
-    const next = image.getBoundingClientRect()
-    if (next.width <= 0 || next.height <= 0) {
-      removeInlineResultOverlay()
-      return
-    }
-    overlayHost.style.left = `${window.scrollX + next.left}px`
-    overlayHost.style.top = `${window.scrollY + next.top}px`
-    overlayHost.style.width = `${next.width}px`
-    overlayHost.style.height = `${next.height}px`
+    const markerWidth = marker.offsetWidth || 34
+    const left = Math.max(0, image.offsetLeft + image.offsetWidth - markerWidth - 4)
+    const top = Math.max(0, image.offsetTop + 4)
+    marker.style.left = `${left}px`
+    marker.style.top = `${top}px`
   }
 
   const onMove = () => requestAnimationFrame(updatePosition)
   updatePosition()
-  window.addEventListener('scroll', onMove, true)
   window.addEventListener('resize', onMove)
+  image.addEventListener('load', onMove)
 
   const cleanup = () => {
-    window.removeEventListener('scroll', onMove, true)
     window.removeEventListener('resize', onMove)
+    image.removeEventListener('load', onMove)
+    image.style.filter = previousImageFilter
+    image.style.outline = previousImageOutline
+    image.style.outlineOffset = previousImageOutlineOffset
+    delete image.dataset.boltqrInlineResult
+    if (changedParentPosition) parent.style.position = previousParentPosition
   }
-  ;(overlayHost as any).__boltqrCleanup = cleanup
-
-  pin.addEventListener('click', () => {
-    if (safeUrl) {
-      if (settings.openBehavior === 'same-tab') {
-        window.location.href = safeUrl
-      } else {
-        window.open(safeUrl, '_blank', 'noopener')
-      }
-      return
-    }
-    void copyToClipboard(bundle.qrText)
-  })
-  closeButton.addEventListener('click', (event) => {
-    event.stopPropagation()
-    removeInlineResultOverlay()
-  })
+  ;(marker as any).__boltqrCleanup = cleanup
 
   return true
+}
+
+function mergeCssFilter(existing: string, addition: string): string {
+  return existing.trim() ? `${existing} ${addition}` : addition
 }
 
 function sectionFromText(labelText: string, valueText: string): HTMLDivElement {

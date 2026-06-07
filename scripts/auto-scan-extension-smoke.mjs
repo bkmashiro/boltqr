@@ -709,7 +709,7 @@ async function testCandidateSearchCanDisablePageTextExtraction() {
   }
 }
 
-async function testInlineOverlayStaysAttachedToImageWhenScrolledOffscreen() {
+async function testLocalMarkerDoesNotUsePageCoveringOverlay() {
   const fixture = await launchFixturePage({
     fixtureContent: `
       <!doctype html>
@@ -747,31 +747,30 @@ async function testInlineOverlayStaysAttachedToImageWhenScrolledOffscreen() {
 
     const state = await fixture.page.evaluate(() => {
       const image = document.getElementById('likely-qr')
-      const host = document.getElementById('boltqr-inline-result')
-      const pin = host?.shadowRoot?.querySelector('[part="pin"]')
-      const scrim = host?.shadowRoot?.querySelector('[part="scrim"]')
+      const marker = document.getElementById('boltqr-inline-marker')
       const imageRect = image?.getBoundingClientRect()
-      const hostRect = host?.getBoundingClientRect()
-      const pinRect = pin?.getBoundingClientRect()
-      const scrimRect = scrim?.getBoundingClientRect()
+      const markerRect = marker?.getBoundingClientRect()
       return {
         image: imageRect && { left: imageRect.left, top: imageRect.top, width: imageRect.width, height: imageRect.height },
-        host: hostRect && { left: hostRect.left, top: hostRect.top, width: hostRect.width, height: hostRect.height },
-        pin: pinRect && { left: pinRect.left, top: pinRect.top, width: pinRect.width, height: pinRect.height },
-        scrim: scrimRect && { left: scrimRect.left, top: scrimRect.top, width: scrimRect.width, height: scrimRect.height },
+        marker: markerRect && { left: markerRect.left, top: markerRect.top, width: markerRect.width, height: markerRect.height },
+        markerParentTag: marker?.parentElement?.tagName || '',
+        markerParentIsRoot: marker?.parentElement === document.documentElement,
+        zIndex: marker ? getComputedStyle(marker).zIndex : '',
+        pointerEvents: marker ? getComputedStyle(marker).pointerEvents : '',
+        title: marker?.getAttribute('title') || '',
+        oldOverlayExists: !!document.getElementById('boltqr-inline-result'),
       }
     })
 
     assert.ok(state.image, 'fixture image should exist')
-    assert.ok(state.host, 'inline overlay host should exist')
-    assert.ok(state.pin, 'inline overlay pin should exist')
-    assert.ok(state.scrim, 'inline overlay scrim should exist')
+    assert.ok(state.marker, 'local QR marker should exist')
+    assert.equal(state.oldOverlayExists, false, 'old document-level inline overlay should not exist')
+    assert.equal(state.markerParentIsRoot, false, 'marker should be injected into local page content, not documentElement')
+    assert.notEqual(state.zIndex, '2147483647', 'marker must not use max z-index')
+    assert.equal(state.pointerEvents, 'none', 'marker should not steal page clicks')
+    assert.ok(state.title.includes(qrTextValue), `marker title should carry decoded result: ${state.title}`)
     assert.ok(state.image.top < 0, `image should be scrolled partly offscreen: ${JSON.stringify(state.image)}`)
-    assert.ok(state.pin.top < 0, `pin should scroll with the image instead of clamping to viewport: ${JSON.stringify(state)}`)
-    assert.equal(Math.round(state.host.top), Math.round(state.image.top))
-    assert.equal(Math.round(state.host.left), Math.round(state.image.left))
-    assert.equal(Math.round(state.scrim.top), Math.round(state.image.top))
-    assert.equal(Math.round(state.scrim.left), Math.round(state.image.left))
+    assert.ok(state.marker.top < 0, `local marker should scroll with parent content instead of sticking to viewport: ${JSON.stringify(state)}`)
   } finally {
     await closeFixture(fixture)
   }
@@ -783,7 +782,7 @@ await testManualWebpHttpFailureRecordsDiagnostics()
 await testManualScanUsesLoadedImagePixelsBeforeRefetching()
 await testAutoScanDedupesAfterDomMutation()
 await testCandidateSearchCanDisablePageTextExtraction()
-await testInlineOverlayStaysAttachedToImageWhenScrolledOffscreen()
+await testLocalMarkerDoesNotUsePageCoveringOverlay()
 await testAutoScanBatchAndRuntimeGuardrails()
 await testAutoScanFailureStaysSilentThroughBackgroundPath()
 console.log('auto-scan extension smoke passed')

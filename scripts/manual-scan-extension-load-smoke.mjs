@@ -150,7 +150,7 @@ async function pollUntil(page, label, timeoutMs, evaluator) {
   const state = await page.evaluate(() => ({
     started: document.documentElement.dataset.boltqrAutoScanStarted,
     toastText: document.getElementById('boltqr-toast')?.textContent || null,
-    inlineText: document.getElementById('boltqr-inline-result')?.shadowRoot?.textContent || null,
+    inlineText: document.getElementById('boltqr-inline-marker')?.title || null,
     imageCount: document.images.length,
     images: Array.from(document.images).map((img) => ({
       id: img.id,
@@ -248,12 +248,12 @@ async function main() {
 
     await pollUntil(
       page,
-      `manual scan inline result did not show fixture QR text (${FIXTURE_QR_TEXT})`,
+      `manual scan local marker did not show fixture QR text (${FIXTURE_QR_TEXT})`,
       TOAST_TIMEOUT_MS,
       () =>
         page.evaluate((expected) => {
-          const inline = document.getElementById('boltqr-inline-result')
-          return !!inline?.shadowRoot && (inline.shadowRoot.textContent || '').includes(expected)
+          const marker = document.getElementById('boltqr-inline-marker')
+          return !!marker && marker.parentElement !== document.documentElement && ((marker.getAttribute('title') || '').includes(expected) || (document.getElementById('boltqr-toast')?.textContent || '').includes(expected))
         }, FIXTURE_QR_TEXT),
     )
 

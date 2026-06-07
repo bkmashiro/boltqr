@@ -99,7 +99,7 @@ async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto',
     if (!isSupportedImageUrl(srcUrl)) {
       throw new Error('只支持 PNG/JPG/JPEG/WebP 图片')
     }
-    const decoded = imageData ? await decodePixelImageData(srcUrl, imageData, { mode, pageUrl }) : await decodeImageUrl(srcUrl, { mode, pageUrl })
+    const decoded = await decodeImageWithOptionalPixels(srcUrl, imageData, { mode, pageUrl })
     const bundle = await extractCandidatesFromTab(tabId, decoded.text, srcUrl, decoded.mime)
     const ingest = await sendToSmartExtract(bundle, mode)
     await chrome.tabs.sendMessage(tabId, { type: 'boltqr:show-result', bundle, ingest })
@@ -128,6 +128,24 @@ function isSupportedImageUrl(url: string): boolean {
   if (url.startsWith('data:image/png') || url.startsWith('data:image/jpeg') || url.startsWith('data:image/webp')) return true
   if (url.startsWith('blob:')) return true
   return /\.(png|jpe?g|webp)(?:[?#].*)?$/i.test(url)
+}
+
+async function decodeImageWithOptionalPixels(srcUrl: string, payload: PixelImagePayload | undefined, context: { mode: 'manual' | 'auto'; pageUrl?: string }): Promise<{ text: string; mime: string }> {
+  if (payload) {
+    try {
+      return await decodePixelImageData(srcUrl, payload, context)
+    } catch (err) {
+      await recordScanDebug({
+        srcUrl,
+        mode: context.mode,
+        pageUrl: context.pageUrl,
+        phase: 'loaded-image-pixels-error',
+        error: err instanceof Error ? err.message : String(err),
+        createdAt: new Date().toISOString(),
+      })
+    }
+  }
+  return decodeImageUrl(srcUrl, context)
 }
 
 async function decodePixelImageData(srcUrl: string, payload: PixelImagePayload, context: { mode: 'manual' | 'auto'; pageUrl?: string }): Promise<{ text: string; mime: string }> {
