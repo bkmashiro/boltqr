@@ -1,0 +1,91 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package-extension:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build app
+        run: pnpm build
+
+      - name: Build extension
+        run: pnpm build:extension
+
+      - name: Test
+        run: pnpm test
+
+      - name: Resolve package metadata
+        id: meta
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${PACKAGE_VERSION}"
+          fi
+          ARTIFACT_NAME="boltqr-${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Package unpacked extension
+        run: |
+          mkdir -p release
+          cd dist-extension
+          zip -qr "../release/${{ steps.meta.outputs.artifact_name }}.zip" .
+          cd ..
+          unzip -t "release/${{ steps.meta.outputs.artifact_name }}.zip"
+          unzip -l "release/${{ steps.meta.outputs.artifact_name }}.zip"
+          test "$(unzip -Z1 "release/${{ steps.meta.outputs.artifact_name }}.zip" | grep -c '^manifest.json$')" -eq 1
+          sha256sum "release/${{ steps.meta.outputs.artifact_name }}.zip" > "release/${{ steps.meta.outputs.artifact_name }}.zip.sha256"
+
+      - name: Upload packaged extension artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: |
+            release/${{ steps.meta.outputs.artifact_name }}.zip
+            release/${{ steps.meta.outputs.artifact_name }}.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub Release for tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          TITLE="BoltQR ${TAG}"
+          NOTES=$'Chrome/Edge MV3 unpacked extension package.\n\nInstall: download the zip, unzip it, then load the extracted folder from chrome://extensions or edge://extensions with Developer mode enabled.'
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber
+          else
+            gh release create "$TAG" release/* --verify-tag --title "$TITLE" --notes "$NOTES"
+          fi
