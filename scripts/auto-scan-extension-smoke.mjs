@@ -204,6 +204,7 @@ async function installChromeStub(page, options = {}) {
       window.__boltqrContextMenuClickHandlers = contextMenuClickHandlers
       window.__boltqrInstalledHandlers = installedHandlers
       window.__boltqrAutoScanStats = autoScanStats
+      window.__boltqrStorageSetCalls = []
 
       window.chrome = {
         runtime: {
@@ -254,6 +255,10 @@ async function installChromeStub(page, options = {}) {
               smartExtractManualOnly: false,
               ...storageValues,
             }),
+            set: async (values) => {
+              Object.assign(storageValues, values)
+              window.__boltqrStorageSetCalls.push(values)
+            },
           },
         },
         tabs: {
@@ -477,6 +482,54 @@ async function testContextMenuClickScansImage() {
   }
 }
 
+async function testManualWebpHttpFailureRecordsDiagnostics() {
+  const fixture = await launchFixturePage({
+    fixtureContent: `
+      <!doctype html>
+      <html>
+        <head><meta charset="utf-8" /><title>Manual WebP Failure Fixture</title></head>
+        <body><h1>No auto-scan images here</h1></body>
+      </html>
+    `,
+    failedImagePathPattern: /\/blocked\.webp$/,
+  })
+  try {
+    await fixture.page.evaluate(() => {
+      window.__boltqrShowResultMessages.length = 0
+      window.__boltqrStorageSetCalls.length = 0
+      for (const handler of window.__boltqrContextMenuClickHandlers) {
+        handler(
+          {
+            menuItemId: 'boltqr-scan-image',
+            srcUrl: 'https://example.com/assets/blocked.webp',
+          },
+          { id: 1, url: window.location.href },
+        )
+      }
+    })
+
+    await waitFor(
+      fixture.page,
+      () => window.__boltqrShowResultMessages?.some((msg) => msg?.type === 'boltqr:decode-error') === true,
+      'manual WebP decode-error message',
+    )
+    const state = await fixture.page.evaluate(() => ({
+      messages: window.__boltqrShowResultMessages,
+      storageSetCalls: window.__boltqrStorageSetCalls,
+    }))
+    const decodeError = state.messages.find((msg) => msg?.type === 'boltqr:decode-error')
+    assert.match(decodeError?.message || '', /HTTP 404|HTTP 403/)
+    assert.match(decodeError?.message || '', /blocked\.webp/)
+    const debug = state.storageSetCalls.slice().reverse().find((entry) => entry?.boltqrLastScanDebug)?.boltqrLastScanDebug
+    assert.equal(debug?.srcUrl, 'https://example.com/assets/blocked.webp')
+    assert.equal(debug?.mode, 'manual')
+    assert.equal(debug?.phase, 'scan-error')
+    assert.match(debug?.error || '', /HTTP 404|HTTP 403/)
+  } finally {
+    await closeFixture(fixture)
+  }
+}
+
 async function testAutoScanDedupesAfterDomMutation() {
   const fixture = await launchFixturePage()
   try {
@@ -670,6 +723,7 @@ async function testInlineOverlayStaysAttachedToImageWhenScrolledOffscreen() {
 
 await testAutoScanDispatchesAndShowResult()
 await testContextMenuClickScansImage()
+await testManualWebpHttpFailureRecordsDiagnostics()
 await testAutoScanDedupesAfterDomMutation()
 await testCandidateSearchCanDisablePageTextExtraction()
 await testInlineOverlayStaysAttachedToImageWhenScrolledOffscreen()

@@ -8,7 +8,26 @@ import type {
 import { toRuntimeSettings } from './options/settings'
 
 const MENU_ID = 'boltqr-scan-image'
+const DEBUG_STORAGE_KEY = 'boltqrLastScanDebug'
 let zxingReady: Promise<void> | null = null
+
+interface SenderTabContext {
+  id?: number
+  url?: string
+}
+
+interface ScanDebugInfo {
+  srcUrl: string
+  mode: 'manual' | 'auto'
+  pageUrl?: string
+  phase: string
+  status?: number
+  statusText?: string
+  contentType?: string
+  ok?: boolean
+  error?: string
+  createdAt: string
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
@@ -20,7 +39,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== MENU_ID || !info.srcUrl || !tab?.id) return
-  void scanImageFromContextMenu(info.srcUrl, tab.id)
+  void scanImageFromContextMenu(info.srcUrl, tab.id, tab.url)
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -28,23 +47,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!msg?.srcUrl) return undefined
   const mode = msg.type === 'boltqr:auto-scan-image' ? 'auto' : msg.type === 'boltqr:manual-scan-image' ? 'manual' : null
   if (!mode) return undefined
-  void resolveSenderTabId(sender)
-    .then((tabId) => {
-      if (!tabId) throw new Error('无法定位当前标签页')
-      return mode === 'auto' ? scanImageFromAutoScan(msg.srcUrl, tabId) : scanImageFromContextMenu(msg.srcUrl, tabId)
+  void resolveSenderTabContext(sender)
+    .then((tab) => {
+      if (!tab.id) throw new Error('无法定位当前标签页')
+      return mode === 'auto' ? scanImageFromAutoScan(msg.srcUrl, tab.id, tab.url) : scanImageFromContextMenu(msg.srcUrl, tab.id, tab.url)
     })
     .then((result) => sendResponse(result))
     .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }))
   return true
 })
 
-async function resolveSenderTabId(sender: chrome.runtime.MessageSender): Promise<number | undefined> {
-  if (sender.tab?.id) return sender.tab.id
+async function resolveSenderTabContext(sender: chrome.runtime.MessageSender): Promise<SenderTabContext> {
+  if (sender.tab?.id) return { id: sender.tab.id, url: sender.tab.url }
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
-    return tabs[0]?.id
+    return { id: tabs[0]?.id, url: tabs[0]?.url }
   } catch {
-    return undefined
+    return {}
   }
 }
 
@@ -60,26 +79,34 @@ async function ensureZXing() {
   await zxingReady
 }
 
-async function scanImageFromContextMenu(srcUrl: string, tabId: number): Promise<{ ok: boolean; error?: string }> {
-  return scanImage(srcUrl, tabId, 'manual')
+async function scanImageFromContextMenu(srcUrl: string, tabId: number, pageUrl?: string): Promise<{ ok: boolean; error?: string }> {
+  return scanImage(srcUrl, tabId, 'manual', pageUrl)
 }
 
-async function scanImageFromAutoScan(srcUrl: string, tabId: number): Promise<{ ok: boolean; error?: string }> {
-  return scanImage(srcUrl, tabId, 'auto')
+async function scanImageFromAutoScan(srcUrl: string, tabId: number, pageUrl?: string): Promise<{ ok: boolean; error?: string }> {
+  return scanImage(srcUrl, tabId, 'auto', pageUrl)
 }
 
-async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto'): Promise<{ ok: boolean; error?: string }> {
+async function scanImage(srcUrl: string, tabId: number, mode: 'manual' | 'auto', pageUrl?: string): Promise<{ ok: boolean; error?: string }> {
   try {
     if (!isSupportedImageUrl(srcUrl)) {
       throw new Error('只支持 PNG/JPG/JPEG/WebP 图片')
     }
-    const decoded = await decodeImageUrl(srcUrl)
+    const decoded = await decodeImageUrl(srcUrl, { mode, pageUrl })
     const bundle = await extractCandidatesFromTab(tabId, decoded.text, srcUrl, decoded.mime)
     const ingest = await sendToSmartExtract(bundle, mode)
     await chrome.tabs.sendMessage(tabId, { type: 'boltqr:show-result', bundle, ingest })
     return { ok: true }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    await recordScanDebug({
+      srcUrl,
+      mode,
+      pageUrl,
+      phase: 'scan-error',
+      error: message,
+      createdAt: new Date().toISOString(),
+    })
     if (mode === 'auto') return { ok: false, error: message }
     try {
       await chrome.tabs.sendMessage(tabId, { type: 'boltqr:decode-error', message })
@@ -96,10 +123,30 @@ function isSupportedImageUrl(url: string): boolean {
   return /\.(png|jpe?g|webp)(?:[?#].*)?$/i.test(url)
 }
 
-async function decodeImageUrl(srcUrl: string): Promise<{ text: string; mime: string }> {
+async function decodeImageUrl(srcUrl: string, context: { mode: 'manual' | 'auto'; pageUrl?: string }): Promise<{ text: string; mime: string }> {
   await ensureZXing()
-  const response = await fetch(srcUrl, { credentials: 'include', cache: 'force-cache' })
-  if (!response.ok) throw new Error(`图片读取失败: HTTP ${response.status}`)
+  const fetchInit: RequestInit = { credentials: 'include', cache: 'force-cache' }
+  if (context.pageUrl && /^https?:\/\//i.test(context.pageUrl)) {
+    fetchInit.referrer = context.pageUrl
+    fetchInit.referrerPolicy = 'strict-origin-when-cross-origin'
+  }
+
+  const response = await fetch(srcUrl, fetchInit)
+  const contentType = response.headers.get('content-type') || ''
+  await recordScanDebug({
+    srcUrl,
+    mode: context.mode,
+    pageUrl: context.pageUrl,
+    phase: 'fetch-image',
+    status: response.status,
+    statusText: response.statusText,
+    contentType,
+    ok: response.ok,
+    createdAt: new Date().toISOString(),
+  })
+  if (!response.ok) {
+    throw new Error(`图片读取失败: HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}; type=${contentType || 'unknown'}; url=${shortenForDebug(srcUrl)}`)
+  }
   const blob = await response.blob()
   if (!/^image\/(png|jpeg|webp)$/i.test(blob.type) && !isSupportedImageUrl(srcUrl)) {
     throw new Error(`不支持的图片类型: ${blob.type || 'unknown'}`)
@@ -122,6 +169,19 @@ async function decodeImageUrl(srcUrl: string): Promise<{ text: string; mime: str
   const first = results[0]
   if (!first?.isValid || !first.text) throw new Error('未识别到二维码')
   return { text: first.text, mime: blob.type || '' }
+}
+
+async function recordScanDebug(info: ScanDebugInfo): Promise<void> {
+  try {
+    await chrome.storage.local.set({ [DEBUG_STORAGE_KEY]: info })
+    console.debug?.('[BoltQR] scan debug', info)
+  } catch {
+    // Diagnostics must never break scanning.
+  }
+}
+
+function shortenForDebug(value: string): string {
+  return value.length > 180 ? `${value.slice(0, 177)}...` : value
 }
 
 async function extractCandidatesFromTab(tabId: number, qrText: string, srcUrl: string, imageMime?: string): Promise<CandidateBundle> {
