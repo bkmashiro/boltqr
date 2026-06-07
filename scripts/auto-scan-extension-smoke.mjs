@@ -109,8 +109,9 @@ async function installChromeStub(page, options = {}) {
   const mockAutoScan = Boolean(options.mockAutoScan)
   const autoScanDelayMs = Math.max(0, Number(options.autoScanDelayMs ?? 40))
   const autoScanErrorText = options.autoScanErrorText || 'mock auto-scan failed'
+  const storageValues = options.storageValues || {}
 
-  await page.evaluate(({ mockAutoScan, autoScanDelayMs, autoScanErrorText }) => {
+  await page.evaluate(({ mockAutoScan, autoScanDelayMs, autoScanErrorText, storageValues }) => {
     const sentMessages = []
     const showResultMessages = []
     const installedHandlers = []
@@ -251,6 +252,7 @@ async function installChromeStub(page, options = {}) {
             get: async () => ({
               smartExtractEnabled: true,
               smartExtractManualOnly: false,
+              ...storageValues,
             }),
           },
         },
@@ -271,7 +273,7 @@ async function installChromeStub(page, options = {}) {
     }
 
     installGlobals()
-  }, { mockAutoScan, autoScanDelayMs, autoScanErrorText })
+  }, { mockAutoScan, autoScanDelayMs, autoScanErrorText, storageValues })
 }
 
 async function makeQrPngBuffer() {
@@ -575,9 +577,33 @@ async function testAutoScanFailureStaysSilentThroughBackgroundPath() {
   }
 }
 
+async function testCandidateSearchCanDisablePageTextExtraction() {
+  const fixture = await launchFixturePage({
+    chromeStubOptions: {
+      storageValues: {
+        smartExtractCandidateSearchEnabled: false,
+      },
+    },
+  })
+  try {
+    await waitForAutoScanMessage(fixture.page)
+    await waitForAutoScanResult(fixture.page)
+
+    const showResultMessages = await fixture.page.evaluate(() => window.__boltqrShowResultMessages)
+    const showResult = showResultMessages[showResultMessages.length - 1]
+    assert.equal(showResult?.type, 'boltqr:show-result')
+    assert.equal(showResult?.bundle?.qrText, qrTextValue)
+    assert.equal(showResult?.bundle?.qrUrl, qrTextValue)
+    assert.deepEqual(showResult?.bundle?.candidates, [])
+  } finally {
+    await closeFixture(fixture)
+  }
+}
+
 await testAutoScanDispatchesAndShowResult()
 await testContextMenuClickScansImage()
 await testAutoScanDedupesAfterDomMutation()
+await testCandidateSearchCanDisablePageTextExtraction()
 await testAutoScanBatchAndRuntimeGuardrails()
 await testAutoScanFailureStaysSilentThroughBackgroundPath()
 console.log('auto-scan extension smoke passed')

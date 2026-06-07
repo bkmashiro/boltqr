@@ -6,7 +6,7 @@ body {
 }
 
 main {
-  width: min(720px, calc(100vw - 40px));
+  width: min(760px, calc(100vw - 40px));
   margin: 40px auto;
   padding: 28px;
   border-radius: 18px;
@@ -14,13 +14,31 @@ main {
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
 }
 
-h1 { margin: 0 0 8px; }
-.muted { color: #94a3b8; margin-bottom: 24px; }
+h1 {
+  margin: 0 0 8px;
+}
+
+.muted {
+  color: #94a3b8;
+  margin-bottom: 24px;
+}
+
+.group {
+  border-top: 1px solid #1f2937;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: #dbeafe;
+}
 
 label {
   display: grid;
   gap: 8px;
-  margin: 16px 0;
+  margin: 12px 0;
   color: #cbd5e1;
 }
 
@@ -30,7 +48,7 @@ label.check {
   gap: 10px;
 }
 
-input[type="url"], input[type="password"] {
+input[type="url"], input[type="password"], select {
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
@@ -40,7 +58,10 @@ input[type="url"], input[type="password"] {
   color: #f8fafc;
 }
 
-.actions { display: flex; gap: 12px; margin-top: 22px; }
+select {
+  appearance: none;
+}
+
 button {
   border: 0;
   border-radius: 10px;
@@ -50,7 +71,16 @@ button {
   color: white;
   font-weight: 700;
 }
-button[type="button"] { background: #334155; }
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+button[type="button"] {
+  background: #334155;
+}
 
 pre {
   min-height: 42px;

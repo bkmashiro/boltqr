@@ -189,6 +189,7 @@ async function pollUntil(page, label, timeoutMs, evaluator) {
   const state = await page.evaluate(() => ({
     started: document.documentElement.dataset.boltqrAutoScanStarted,
     toastText: document.getElementById('boltqr-toast')?.textContent || null,
+    inlineText: document.getElementById('boltqr-inline-result')?.shadowRoot?.textContent || null,
     imageCount: document.images.length,
     images: Array.from(document.images).map((img) => ({
       id: img.id,
@@ -299,18 +300,18 @@ async function main() {
 
     await pollUntil(
       page,
-      `toast did not show dynamic QR text (${FIXTURE_QR_TEXT})`,
+      `inline result did not show dynamic QR text (${FIXTURE_QR_TEXT})`,
       TOAST_TIMEOUT_MS,
       () =>
         page.evaluate((expected) => {
-          const toast = document.getElementById('boltqr-toast')
-          return !!toast && (toast.textContent || '').includes(expected)
+          const inline = document.getElementById('boltqr-inline-result')
+          return !!inline?.shadowRoot && (inline.shadowRoot.textContent || '').includes(expected)
         }, FIXTURE_QR_TEXT),
     )
 
-    const toastText = await page.$eval('#boltqr-toast', (el) => el?.textContent || '')
-    if (!toastText.includes(FIXTURE_QR_TEXT)) {
-      throw new Error(`Expected toast text to include ${FIXTURE_QR_TEXT}, got: ${toastText}`)
+    const inlineText = await page.evaluate(() => document.getElementById('boltqr-inline-result')?.shadowRoot?.textContent || '')
+    if (!inlineText.includes(FIXTURE_QR_TEXT)) {
+      throw new Error(`Expected inline result text to include ${FIXTURE_QR_TEXT}, got: ${inlineText}`)
     }
 
     console.log('auto-scan boundary mv3 smoke passed')

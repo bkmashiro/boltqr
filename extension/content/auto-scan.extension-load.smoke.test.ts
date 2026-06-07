@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 // @vitest-environment node
 
 describe('auto-scan MV3 extension load smoke (Playwright)', () => {
-  it('loads real dist-extension and verifies auto-scan toast path', { timeout: 90_000 }, () => {
+  it('loads real dist-extension and verifies auto-scan inline result path', { timeout: 90_000 }, () => {
     const output = execFileSync('node', [resolve(process.cwd(), 'scripts/auto-scan-extension-load-smoke.mjs')], {
       cwd: process.cwd(),
       encoding: 'utf8',
