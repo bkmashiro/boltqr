@@ -359,14 +359,16 @@ function showInlineResult(message: ShowResultMessage, settings: ResultDisplaySet
   const style = document.createElement('style')
   style.textContent = `
     :host {
-      position: fixed;
-      inset: 0;
+      position: absolute;
       z-index: 2147483647;
       pointer-events: none;
+      overflow: visible;
+      box-sizing: border-box;
       font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     .scrim {
-      position: fixed;
+      position: absolute;
+      inset: 0;
       border-radius: 10px;
       background: rgba(15, 23, 42, 0.52);
       backdrop-filter: grayscale(1) contrast(.85);
@@ -374,11 +376,13 @@ function showInlineResult(message: ShowResultMessage, settings: ResultDisplaySet
       box-sizing: border-box;
     }
     .pin {
-      position: fixed;
+      position: absolute;
+      left: 6px;
+      top: 6px;
       display: grid;
       gap: 4px;
-      min-width: 128px;
-      max-width: min(260px, calc(100vw - 24px));
+      width: min(260px, calc(100% - 12px));
+      min-width: min(96px, calc(100% - 12px));
       padding: 8px 34px 8px 10px;
       border: 1px solid rgba(148, 163, 184, .45);
       border-radius: 10px;
@@ -478,17 +482,10 @@ function showInlineResult(message: ShowResultMessage, settings: ResultDisplaySet
       removeInlineResultOverlay()
       return
     }
-    scrim.style.left = `${Math.max(0, next.left)}px`
-    scrim.style.top = `${Math.max(0, next.top)}px`
-    scrim.style.width = `${next.width}px`
-    scrim.style.height = `${next.height}px`
-
-    const pinWidth = Math.min(260, Math.max(128, next.width))
-    const pinLeft = Math.min(Math.max(8, next.left), Math.max(8, window.innerWidth - pinWidth - 8))
-    const pinTop = Math.min(Math.max(8, next.top - 10), Math.max(8, window.innerHeight - 72))
-    pin.style.width = `${pinWidth}px`
-    pin.style.left = `${pinLeft}px`
-    pin.style.top = `${pinTop}px`
+    overlayHost.style.left = `${window.scrollX + next.left}px`
+    overlayHost.style.top = `${window.scrollY + next.top}px`
+    overlayHost.style.width = `${next.width}px`
+    overlayHost.style.height = `${next.height}px`
   }
 
   const onMove = () => requestAnimationFrame(updatePosition)

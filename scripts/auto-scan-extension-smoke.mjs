@@ -600,10 +600,79 @@ async function testCandidateSearchCanDisablePageTextExtraction() {
   }
 }
 
+async function testInlineOverlayStaysAttachedToImageWhenScrolledOffscreen() {
+  const fixture = await launchFixturePage({
+    fixtureContent: `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Inline Overlay Scroll Fixture</title>
+          <style>
+            body { margin: 0; min-height: 2400px; }
+            .spacer { height: 1200px; }
+            #likely-qr { display: block; width: 160px; height: 160px; margin: 0 0 0 40px; }
+          </style>
+        </head>
+        <body>
+          <div class="spacer"></div>
+          <img
+            id="likely-qr"
+            src="https://example.com/assets/download-qr.png"
+            width="160"
+            height="160"
+            alt="微信 扫码 下载 二维码"
+          />
+        </body>
+      </html>
+    `,
+  })
+  try {
+    await fixture.page.setViewportSize({ width: 800, height: 600 })
+    await fixture.page.evaluate(() => window.scrollTo(0, 1050))
+    await waitForAutoScanMessage(fixture.page)
+    await waitForAutoScanResult(fixture.page)
+
+    await fixture.page.evaluate(() => window.scrollTo(0, 1410))
+    await fixture.page.waitForTimeout(100)
+
+    const state = await fixture.page.evaluate(() => {
+      const image = document.getElementById('likely-qr')
+      const host = document.getElementById('boltqr-inline-result')
+      const pin = host?.shadowRoot?.querySelector('[part="pin"]')
+      const scrim = host?.shadowRoot?.querySelector('[part="scrim"]')
+      const imageRect = image?.getBoundingClientRect()
+      const hostRect = host?.getBoundingClientRect()
+      const pinRect = pin?.getBoundingClientRect()
+      const scrimRect = scrim?.getBoundingClientRect()
+      return {
+        image: imageRect && { left: imageRect.left, top: imageRect.top, width: imageRect.width, height: imageRect.height },
+        host: hostRect && { left: hostRect.left, top: hostRect.top, width: hostRect.width, height: hostRect.height },
+        pin: pinRect && { left: pinRect.left, top: pinRect.top, width: pinRect.width, height: pinRect.height },
+        scrim: scrimRect && { left: scrimRect.left, top: scrimRect.top, width: scrimRect.width, height: scrimRect.height },
+      }
+    })
+
+    assert.ok(state.image, 'fixture image should exist')
+    assert.ok(state.host, 'inline overlay host should exist')
+    assert.ok(state.pin, 'inline overlay pin should exist')
+    assert.ok(state.scrim, 'inline overlay scrim should exist')
+    assert.ok(state.image.top < 0, `image should be scrolled partly offscreen: ${JSON.stringify(state.image)}`)
+    assert.ok(state.pin.top < 0, `pin should scroll with the image instead of clamping to viewport: ${JSON.stringify(state)}`)
+    assert.equal(Math.round(state.host.top), Math.round(state.image.top))
+    assert.equal(Math.round(state.host.left), Math.round(state.image.left))
+    assert.equal(Math.round(state.scrim.top), Math.round(state.image.top))
+    assert.equal(Math.round(state.scrim.left), Math.round(state.image.left))
+  } finally {
+    await closeFixture(fixture)
+  }
+}
+
 await testAutoScanDispatchesAndShowResult()
 await testContextMenuClickScansImage()
 await testAutoScanDedupesAfterDomMutation()
 await testCandidateSearchCanDisablePageTextExtraction()
+await testInlineOverlayStaysAttachedToImageWhenScrolledOffscreen()
 await testAutoScanBatchAndRuntimeGuardrails()
 await testAutoScanFailureStaysSilentThroughBackgroundPath()
 console.log('auto-scan extension smoke passed')
