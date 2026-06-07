@@ -25,11 +25,13 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const msg = message as any
-  if (msg?.type !== 'boltqr:auto-scan-image' || !msg.srcUrl) return undefined
+  if (!msg?.srcUrl) return undefined
+  const mode = msg.type === 'boltqr:auto-scan-image' ? 'auto' : msg.type === 'boltqr:manual-scan-image' ? 'manual' : null
+  if (!mode) return undefined
   void resolveSenderTabId(sender)
     .then((tabId) => {
       if (!tabId) throw new Error('无法定位当前标签页')
-      return scanImageFromAutoScan(msg.srcUrl, tabId)
+      return mode === 'auto' ? scanImageFromAutoScan(msg.srcUrl, tabId) : scanImageFromContextMenu(msg.srcUrl, tabId)
     })
     .then((result) => sendResponse(result))
     .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }))
@@ -58,8 +60,8 @@ async function ensureZXing() {
   await zxingReady
 }
 
-async function scanImageFromContextMenu(srcUrl: string, tabId: number) {
-  await scanImage(srcUrl, tabId, 'manual')
+async function scanImageFromContextMenu(srcUrl: string, tabId: number): Promise<{ ok: boolean; error?: string }> {
+  return scanImage(srcUrl, tabId, 'manual')
 }
 
 async function scanImageFromAutoScan(srcUrl: string, tabId: number): Promise<{ ok: boolean; error?: string }> {

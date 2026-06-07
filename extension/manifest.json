@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "BoltQR",
   "version": "0.1.0",
-  "description": "Fast QR decoding for download links, with local password candidate handoff.",
+  "description": "Fast local QR decoding for web pages and images.",
   "permissions": ["contextMenus", "activeTab", "storage"],
   "host_permissions": ["<all_urls>", "http://127.0.0.1/*", "http://localhost/*"],
   "background": {

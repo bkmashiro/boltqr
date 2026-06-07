@@ -2,12 +2,12 @@
 
 Fast, local-first QR decoding browser extension for QR download flows.
 
-BoltQR focuses on a low-friction flow:
+BoltQR focuses on fast, local-first QR recognition in Chrome/Edge:
 
-1. Right-click an image in Chrome/Edge.
-2. Decode QR locally with `zxing-wasm`.
-3. Extract high-recall password candidates from the current page.
-4. Send candidates to a localhost helper protocol for archive extraction tools.
+1. Quietly auto-scan likely QR images on the current page.
+2. Fall back to right-clicking an image and choosing `BoltQR: 识别此图片中的二维码`.
+3. Decode locally with `zxing-wasm` and show a small in-page result toast.
+4. Keep page/image data local by default; optional helper integrations are separate from the core QR path.
 
 ## Development
 
@@ -24,6 +24,14 @@ Load the unpacked extension from:
 ```txt
 dist-extension/
 ```
+
+Manual install from a release artifact:
+
+1. Download `boltqr-<version>.zip` from the GitHub Actions artifact or GitHub Release.
+2. Unzip it; the extracted folder should contain `manifest.json` at its root.
+3. Open `chrome://extensions` or `edge://extensions`.
+4. Enable Developer mode.
+5. Click "Load unpacked" / "加载已解压的扩展程序" and select the extracted folder.
 
 ## Helper protocol
 

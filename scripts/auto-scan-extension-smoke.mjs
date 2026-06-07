@@ -47,6 +47,7 @@ async function installChromeStub(page) {
     const showResultMessages = []
     const installedHandlers = []
     const contextMenuCalls = []
+    const contextMenuClickHandlers = []
     const runtimeMessageListeners = []
 
     function makeSendResponsePromise() {
@@ -105,6 +106,7 @@ async function installChromeStub(page) {
     window.__boltqrAutoScanMessages = sentMessages
     window.__boltqrShowResultMessages = showResultMessages
     window.__boltqrContextMenuCalls = contextMenuCalls
+    window.__boltqrContextMenuClickHandlers = contextMenuClickHandlers
     window.__boltqrInstalledHandlers = installedHandlers
 
     window.chrome = {
@@ -138,7 +140,9 @@ async function installChromeStub(page) {
           contextMenuCalls.push(opts)
         },
         onClicked: {
-          addListener: () => undefined,
+          addListener: (handler) => {
+            contextMenuClickHandlers.push(handler)
+          },
         },
       },
       storage: {
@@ -294,6 +298,35 @@ async function testAutoScanDispatchesAndShowResult() {
   }
 }
 
+async function testContextMenuClickScansImage() {
+  const fixture = await launchFixturePage()
+  try {
+    await fixture.page.evaluate(() => {
+      window.__boltqrAutoScanMessages.length = 0
+      window.__boltqrShowResultMessages.length = 0
+      for (const handler of window.__boltqrContextMenuClickHandlers) {
+        handler(
+          {
+            menuItemId: 'boltqr-scan-image',
+            srcUrl: 'https://example.com/assets/download-qr.png',
+          },
+          { id: 1, url: window.location.href },
+        )
+      }
+    })
+
+    await waitForAutoScanResult(fixture.page)
+    const showResultMessages = await fixture.page.evaluate(() => window.__boltqrShowResultMessages)
+    assert.ok(showResultMessages.length >= 1)
+    const showResult = showResultMessages[showResultMessages.length - 1]
+    assert.equal(showResult?.type, 'boltqr:show-result')
+    assert.equal(showResult?.bundle?.qrText, qrTextValue)
+    assert.equal(showResult?.bundle?.qrUrl, qrTextValue)
+  } finally {
+    await closeFixture(fixture)
+  }
+}
+
 async function testAutoScanDedupesAfterDomMutation() {
   const fixture = await launchFixturePage()
   try {
@@ -321,5 +354,6 @@ async function testAutoScanDedupesAfterDomMutation() {
 }
 
 await testAutoScanDispatchesAndShowResult()
+await testContextMenuClickScansImage()
 await testAutoScanDedupesAfterDomMutation()
 console.log('auto-scan extension smoke passed')

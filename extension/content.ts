@@ -45,6 +45,13 @@ async function handleMessage(message: unknown): Promise<CandidateExtractionRespo
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   }
+  if (msg.type === 'boltqr:manual-scan-selected-image' && msg.srcUrl) {
+    try {
+      return await chrome.runtime.sendMessage({ type: 'boltqr:manual-scan-image', srcUrl: msg.srcUrl })
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
   if (msg.type === 'boltqr:show-result' && msg.bundle && msg.ingest) {
     showToast(renderResult(msg))
   }
