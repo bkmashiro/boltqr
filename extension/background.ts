@@ -1,4 +1,4 @@
-import { readBarcodes, prepareZXingModule } from 'zxing-wasm/reader'
+import { decodeQrFromImageData as decodeQrFromPixels } from './qr-decode'
 import type {
   CandidateBundle,
   CandidateExtractionResponse,
@@ -9,7 +9,6 @@ import { toRuntimeSettings } from './options/settings'
 
 const MENU_ID = 'boltqr-scan-image'
 const DEBUG_STORAGE_KEY = 'boltqrLastScanDebug'
-let zxingReady: Promise<void> | null = null
 
 interface SenderTabContext {
   id?: number
@@ -82,18 +81,6 @@ async function resolveSenderTabContext(sender: chrome.runtime.MessageSender): Pr
   } catch {
     return {}
   }
-}
-
-async function ensureZXing() {
-  if (!zxingReady) {
-    zxingReady = prepareZXingModule({
-      fireImmediately: true,
-      overrides: {
-        locateFile: (fileName: string) => chrome.runtime.getURL(fileName),
-      },
-    }).then(() => undefined)
-  }
-  await zxingReady
 }
 
 async function scanImageFromContextMenu(srcUrl: string, tabId: number, pageUrl?: string, imageData?: PixelImagePayload, viewportCrop?: ViewportCropPayload): Promise<{ ok: boolean; error?: string }> {
@@ -173,7 +160,6 @@ async function decodeImageWithOptionalPixels(srcUrl: string, payload: PixelImage
 }
 
 async function decodeVisibleTabCrop(srcUrl: string, crop: ViewportCropPayload, context: { mode: 'manual' | 'auto'; pageUrl?: string; tabId: number }): Promise<{ text: string; mime: string }> {
-  await ensureZXing()
   if (!isValidViewportCrop(crop)) throw new Error('页面截图裁剪区域无效')
   const dataUrl = await captureCurrentVisibleTabPng()
   const blob = await (await fetch(dataUrl)).blob()
@@ -197,7 +183,7 @@ async function decodeVisibleTabCrop(srcUrl: string, crop: ViewportCropPayload, c
     ok: true,
     createdAt: new Date().toISOString(),
   })
-  const text = await decodeQrFromImageData(imageData)
+  const text = await decodeQrFromPixels(imageData, 'robust')
   return { text, mime: 'image/png' }
 }
 
@@ -229,7 +215,6 @@ function captureCurrentVisibleTabPng(): Promise<string> {
 }
 
 async function decodePixelImageData(srcUrl: string, payload: PixelImagePayload, context: { mode: 'manual' | 'auto'; pageUrl?: string }): Promise<{ text: string; mime: string }> {
-  await ensureZXing()
   if (!isValidPixelPayload(payload)) throw new Error('页面图片像素数据无效')
   await recordScanDebug({
     srcUrl,
@@ -240,7 +225,7 @@ async function decodePixelImageData(srcUrl: string, payload: PixelImagePayload, 
     createdAt: new Date().toISOString(),
   })
   const imageData = new ImageData(new Uint8ClampedArray(payload.data), payload.width, payload.height)
-  const text = await decodeQrFromImageData(imageData)
+  const text = await decodeQrFromPixels(imageData, context.mode === 'manual' ? 'robust' : 'fast')
   return { text, mime: '' }
 }
 
@@ -254,7 +239,6 @@ function isValidPixelPayload(payload: PixelImagePayload): boolean {
 }
 
 async function decodeImageUrl(srcUrl: string, context: { mode: 'manual' | 'auto'; pageUrl?: string }): Promise<{ text: string; mime: string }> {
-  await ensureZXing()
   const fetchInit: RequestInit = { credentials: 'include', cache: 'force-cache' }
   if (context.pageUrl && /^https?:\/\//i.test(context.pageUrl)) {
     fetchInit.referrer = context.pageUrl
@@ -288,22 +272,8 @@ async function decodeImageUrl(srcUrl: string, context: { mode: 'manual' | 'auto'
   ctx.drawImage(bitmap, 0, 0)
   const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height)
   bitmap.close()
-  const text = await decodeQrFromImageData(imageData)
+  const text = await decodeQrFromPixels(imageData, context.mode === 'manual' ? 'robust' : 'fast')
   return { text, mime: blob.type || '' }
-}
-
-async function decodeQrFromImageData(imageData: ImageData): Promise<string> {
-  const results = await readBarcodes(imageData, {
-    formats: ['QRCode'],
-    tryHarder: false,
-    tryRotate: false,
-    tryInvert: false,
-    tryDownscale: false,
-    maxNumberOfSymbols: 1,
-  })
-  const first = results[0]
-  if (!first?.isValid || !first.text) throw new Error('未识别到二维码')
-  return first.text
 }
 
 async function recordScanDebug(info: ScanDebugInfo): Promise<void> {
