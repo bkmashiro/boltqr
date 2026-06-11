@@ -89,7 +89,7 @@ async function handleMessage(message: unknown): Promise<CandidateExtractionRespo
     const displaySettings = await loadDisplaySettings()
     const inlineShown = shouldShowInline(displaySettings) ? showInlineResult(resultMessage, displaySettings) : false
     if (shouldShowToast(displaySettings) || inlineShown || (!inlineShown && displaySettings.resultDisplayMode === 'inline')) {
-      showToast(renderResult(resultMessage, displaySettings))
+      showResultToast(resultMessage, displaySettings)
     }
   }
   if (msg.type === 'boltqr:decode-error') {
@@ -283,7 +283,7 @@ function shouldShowToast(displaySettings: ResultDisplaySettings): boolean {
     || (displaySettings.resultDisplayMode === 'inline' && !displaySettings.inlineOverlayEnabled)
 }
 
-function renderResult(message: ShowResultMessage, settings: ResultDisplaySettings): string {
+function renderResultLines(message: ShowResultMessage, settings: ResultDisplaySettings): string[] {
   const { bundle, ingest } = message
   const target = bundle.qrUrl || bundle.qrText || '非 URL 二维码'
   const topCandidates = bundle.candidates.slice(0, 5).map((candidate) => candidate.value)
@@ -298,27 +298,73 @@ function renderResult(message: ShowResultMessage, settings: ResultDisplaySetting
     `候选 ${bundle.candidates.length} 个${topCandidates.length ? `: ${topCandidates.join(', ')}` : ''}`,
   ]
   if (helperLine) lines.push(helperLine)
-  return lines.join('\n')
+  return lines
 }
 
 function renderDecodeError(message: DecodeErrorMessage): string {
   return `BoltQR: ${message.message || '识别失败'}`
 }
 
-function showToast(text: string) {
+function showResultToast(message: ShowResultMessage, settings: ResultDisplaySettings) {
+  const target = message.bundle.qrUrl || message.bundle.downloadUrl || message.bundle.qrText
+  const action = target
+    ? {
+      label: isOpenableUrl(target) ? '打开' : '复制',
+      handler: () => void activateResult(message.bundle, settings),
+    }
+    : undefined
+  showToast(renderResultLines(message, settings), action)
+}
+
+function showToast(text: string | string[], action?: { label: string; handler: () => void }) {
   const old = document.getElementById('boltqr-toast')
   old?.remove()
   const box = document.createElement('div')
   box.id = 'boltqr-toast'
-  box.textContent = text
   box.style.cssText = [
     'position:fixed', 'right:16px', 'bottom:16px', 'z-index:2147483647',
     'max-width:420px', 'white-space:pre-wrap', 'background:#111827', 'color:white',
     'font:13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
     'padding:12px 14px', 'border-radius:10px', 'box-shadow:0 12px 30px rgba(0,0,0,.35)',
+    'display:grid', 'gap:10px', 'box-sizing:border-box',
   ].join(';')
+
+  const body = document.createElement('div')
+  body.textContent = Array.isArray(text) ? text.join('\n') : text
+  box.appendChild(body)
+
+  const actions = document.createElement('div')
+  actions.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;align-items:center'
+  if (action) {
+    const actionButton = toastButton(action.label, true)
+    actionButton.dataset.boltqrToastAction = action.label
+    actionButton.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      action.handler()
+    })
+    actions.appendChild(actionButton)
+  }
+  const closeButton = toastButton('关闭', false)
+  closeButton.dataset.boltqrToastClose = '1'
+  closeButton.addEventListener('click', () => box.remove())
+  actions.appendChild(closeButton)
+  box.appendChild(actions)
+
   document.documentElement.appendChild(box)
-  setTimeout(() => box.remove(), 8000)
+  setTimeout(() => box.remove(), 10_000)
+}
+
+function toastButton(label: string, primary: boolean): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.textContent = label
+  button.style.cssText = [
+    'border:0', 'border-radius:999px', 'padding:5px 10px', 'cursor:pointer',
+    'font:700 12px/1 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
+    primary ? 'background:#facc15;color:#111827' : 'background:#334155;color:#e5e7eb',
+  ].join(';')
+  return button
 }
 
 async function loadDisplaySettings(): Promise<ResultDisplaySettings> {

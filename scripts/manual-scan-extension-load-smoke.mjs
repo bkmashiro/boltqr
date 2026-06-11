@@ -285,6 +285,15 @@ async function main() {
         }, FIXTURE_QR_TEXT),
     )
 
+    const toastOpenedPagePromise = context.waitForEvent('page', { timeout: 8_000 })
+    await page.locator('[data-boltqr-toast-action="打开"]').click()
+    const toastOpenedPage = await toastOpenedPagePromise
+    const toastOpenedUrl = toastOpenedPage.url()
+    await toastOpenedPage.close().catch(() => {})
+    if (!toastOpenedUrl.startsWith(FIXTURE_QR_TEXT)) {
+      throw new Error(`Clicking the toast action did not open the decoded QR link: ${toastOpenedUrl}`)
+    }
+
     const openedPagePromise = context.waitForEvent('page', { timeout: 8_000 })
     await page.locator('#boltqr-inline-marker').click()
     const openedPage = await openedPagePromise
