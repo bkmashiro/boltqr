@@ -409,11 +409,15 @@ function showInlineResult(message: ShowResultMessage, settings: ResultDisplaySet
   marker.dataset.boltqrInlineResult = '1'
   marker.dataset.boltqrLocalMarker = '1'
   marker.textContent = 'QR✓'
-  marker.title = bundle.qrUrl || bundle.qrText || 'BoltQR 识别成功'
+  marker.title = markerTitleForBundle(bundle)
+  marker.setAttribute('role', 'button')
+  marker.setAttribute('aria-label', marker.title)
+  marker.tabIndex = 0
   marker.style.cssText = [
     'position:absolute',
     'z-index:1',
-    'pointer-events:none',
+    'pointer-events:auto',
+    'cursor:pointer',
     'display:inline-flex',
     'align-items:center',
     'justify-content:center',
@@ -428,6 +432,17 @@ function showInlineResult(message: ShowResultMessage, settings: ResultDisplaySet
     'box-shadow:0 2px 8px rgba(0,0,0,.18)',
     'box-sizing:border-box',
   ].join(';')
+
+  const onActivate = (event: Event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    void activateResult(bundle, settings)
+  }
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Enter' || event.key === ' ') onActivate(event)
+  }
+  marker.addEventListener('click', onActivate)
+  marker.addEventListener('keydown', onKeyDown)
 
   const parentComputed = getComputedStyle(parent)
   const previousParentPosition = parent.style.position
@@ -466,6 +481,8 @@ function showInlineResult(message: ShowResultMessage, settings: ResultDisplaySet
   const cleanup = () => {
     window.removeEventListener('resize', onMove)
     image.removeEventListener('load', onMove)
+    marker.removeEventListener('click', onActivate)
+    marker.removeEventListener('keydown', onKeyDown)
     image.style.filter = previousImageFilter
     image.style.outline = previousImageOutline
     image.style.outlineOffset = previousImageOutlineOffset
@@ -475,6 +492,26 @@ function showInlineResult(message: ShowResultMessage, settings: ResultDisplaySet
   ;(marker as any).__boltqrCleanup = cleanup
 
   return true
+}
+
+async function activateResult(bundle: CandidateBundle, settings: ResultDisplaySettings): Promise<void> {
+  const target = bundle.qrUrl || bundle.downloadUrl || bundle.qrText
+  if (!target) return
+  if (isOpenableUrl(target)) {
+    if (settings.openBehavior === 'same-tab') window.location.assign(target)
+    else window.open(target, '_blank', 'noopener,noreferrer')
+    return
+  }
+  await copyToClipboard(target)
+  showToast(`BoltQR 已复制二维码内容\n${compactResultText(target)}`)
+}
+
+function markerTitleForBundle(bundle: CandidateBundle): string {
+  const target = bundle.qrUrl || bundle.downloadUrl || bundle.qrText
+  if (!target) return 'BoltQR 识别成功'
+  return isOpenableUrl(target)
+    ? `BoltQR: 点击打开 ${compactResultText(target)}`
+    : `BoltQR: 点击复制 ${compactResultText(target)}`
 }
 
 function mergeCssFilter(existing: string, addition: string): string {

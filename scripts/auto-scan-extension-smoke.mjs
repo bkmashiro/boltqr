@@ -767,7 +767,7 @@ async function testLocalMarkerDoesNotUsePageCoveringOverlay() {
     assert.equal(state.oldOverlayExists, false, 'old document-level inline overlay should not exist')
     assert.equal(state.markerParentIsRoot, false, 'marker should be injected into local page content, not documentElement')
     assert.notEqual(state.zIndex, '2147483647', 'marker must not use max z-index')
-    assert.equal(state.pointerEvents, 'none', 'marker should not steal page clicks')
+    assert.equal(state.pointerEvents, 'auto', 'marker should be clickable while staying tiny/local')
     assert.ok(state.title.includes(qrTextValue), `marker title should carry decoded result: ${state.title}`)
     assert.ok(state.image.top < 0, `image should be scrolled partly offscreen: ${JSON.stringify(state.image)}`)
     assert.ok(state.marker.top < 0, `local marker should scroll with parent content instead of sticking to viewport: ${JSON.stringify(state)}`)

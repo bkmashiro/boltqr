@@ -23,6 +23,11 @@ h1 {
   margin-bottom: 24px;
 }
 
+.hint {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .group {
   border-top: 1px solid #1f2937;
   margin-top: 16px;

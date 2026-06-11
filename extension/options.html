@@ -8,7 +8,7 @@
 <body>
   <main id="app">
     <h1>BoltQR 设置</h1>
-    <p class="muted">配置本地密码候选 helper。BoltQR 只向 localhost 发送二维码页面中提取的候选。</p>
+    <p class="muted">配置识别后的动作和本地密码候选 helper。默认只在图片角落放一个小角标；点击角标可打开二维码链接，非链接内容会复制。</p>
 
     <label>
       Helper endpoint
@@ -39,14 +39,15 @@
     </section>
 
     <section class="group">
-      <h2>结果展示</h2>
+      <h2>识别后的交互</h2>
       <label>
         结果展示方式
         <select id="resultDisplayMode">
-          <option value="inline">仅内嵌面板</option>
+          <option value="inline">仅图片角标</option>
           <option value="toast">仅 Toast 提示</option>
-          <option value="both">内嵌面板 + Toast</option>
+          <option value="both">图片角标 + Toast</option>
         </select>
+        <span class="hint">图片角标不展开面板：点击打开链接 / 复制非链接文本；Toast 显示完整识别摘要。</span>
       </label>
 
       <label>
@@ -55,16 +56,17 @@
           <option value="new-tab">新标签页</option>
           <option value="same-tab">当前页</option>
         </select>
+        <span class="hint">作用于点击图片角标时的链接打开方式。</span>
       </label>
 
       <label class="check">
         <input id="inlineOverlayEnabled" type="checkbox" />
-        启用二维码内嵌结果面板
+        启用图片角标（右上角 QR✓）
       </label>
 
       <label class="check">
         <input id="grayQrOnResult" type="checkbox" />
-        面板显示灰色蒙层
+        识别成功后淡化二维码图片
       </label>
 
       <label class="check">

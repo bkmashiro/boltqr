@@ -285,6 +285,15 @@ async function main() {
         }, FIXTURE_QR_TEXT),
     )
 
+    const openedPagePromise = context.waitForEvent('page', { timeout: 8_000 })
+    await page.locator('#boltqr-inline-marker').click()
+    const openedPage = await openedPagePromise
+    const openedUrl = openedPage.url()
+    await openedPage.close().catch(() => {})
+    if (!openedUrl.startsWith(FIXTURE_QR_TEXT)) {
+      throw new Error(`Clicking the local marker did not open the decoded QR link: ${openedUrl}`)
+    }
+
     const scanDebug = await extensionTarget.target.evaluate(() => chrome.storage.local.get('boltqrLastScanDebug'))
     if (scanDebug?.boltqrLastScanDebug?.phase !== 'visible-tab-screenshot') {
       throw new Error(`Manual scan did not use screenshot fallback for cross-origin image: ${JSON.stringify(scanDebug)}`)
